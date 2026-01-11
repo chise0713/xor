@@ -9,6 +9,7 @@ local:
 ```console
 xor -b2048 -l127.0.0.1:51820 -m1452 -r place.holder.local.arpa:65535 -t0xFF
 ```
+remote:
 ```console
 xor -b2048 -l[::]:65535 -m1452 -r127.0.0.1:51820 -t0xFF
 ```
