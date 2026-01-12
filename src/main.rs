@@ -1,4 +1,4 @@
-use std::{io::Write as _, process::ExitCode, thread};
+use std::{io::Write as _, process::ExitCode, sync::Arc, thread, time::Duration};
 
 use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
@@ -9,15 +9,13 @@ use tokio::{
     net::UdpSocket,
     signal,
     sync::{
-        OnceCell,
-        mpsc::{self, error::TrySendError},
+        OnceCell, RwLock,
+        mpsc::{self, Receiver, Sender, error::TrySendError},
     },
+    time::{self, Instant},
 };
 
 const K: usize = 1024;
-
-const WORKER_THREADS: usize = 2;
-const RECLAIM_THREAD: usize = 1;
 
 const LINK_MTU_MAX: usize = 65535;
 const UDP_HEADER: usize = 8;
@@ -29,6 +27,8 @@ static RAW_SLICE: [u8; UDP_PAYLOAD_MAX] = [0; _];
 
 static THREAD_POOL: OnceCell<ThreadPool> = OnceCell::const_new();
 static BUF_POOL: OnceCell<ArrayQueue<Box<[u8]>>> = OnceCell::const_new();
+
+static mut TOKEN: u8 = 0;
 
 #[derive(supershorty::Args, Debug)]
 #[args(name = "xor")]
@@ -45,7 +45,7 @@ struct Args {
     token_hex_u8: Option<Box<str>>,
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<ExitCode> {
     let Args {
         buffer_limit_usize,
@@ -60,17 +60,17 @@ async fn main() -> Result<ExitCode> {
         }
     };
 
-    let Some(listen) = listen_address else {
+    let Some(listen_address) = listen_address else {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     };
-    let Some(remote) = remote_address else {
+    let Some(remote_address) = remote_address else {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     };
-    let token = if let Some(token) = token_hex_u8 {
+    if let Some(token) = token_hex_u8 {
         let s = token.trim_start_matches("0x");
-        u8::from_str_radix(s, 16)?
+        unsafe { TOKEN = u8::from_str_radix(s, 16)? };
     } else {
         Args::usage();
         return Ok(ExitCode::FAILURE);
@@ -105,13 +105,14 @@ async fn main() -> Result<ExitCode> {
         })
         .init();
 
-    let listen = UdpSocket::bind(listen.as_ref()).await?;
-    let send_socket = UdpSocket::bind("[::]:0").await?;
-    send_socket.connect(remote.as_ref()).await?;
-    let (tx, mut rx) = mpsc::channel(limit);
+    let local = Arc::new(UdpSocket::bind(listen_address.as_ref()).await?);
+    let remote = Arc::new(UdpSocket::bind("[::]:0").await?);
+    remote.connect(remote_address.as_ref()).await?;
+    let (tx_to_remote, rx_from_local) = mpsc::channel(limit);
+    let (tx_to_local, rx_from_remote) = mpsc::channel(limit);
     THREAD_POOL.set(
         rayon::ThreadPoolBuilder::new()
-            .num_threads(thread::available_parallelism()?.get() - WORKER_THREADS - RECLAIM_THREAD)
+            .num_threads(thread::available_parallelism()?.get() - 4)
             .stack_size(64 * K)
             .thread_name(|i| format!("xor-worker-{}", i))
             .build()?,
@@ -121,76 +122,111 @@ async fn main() -> Result<ExitCode> {
         let pool = BUF_POOL.get().unwrap();
         |_| pool.push(Box::from(&RAW_SLICE[..payload_max])).unwrap()
     });
-    let send_handle = tokio::spawn({
-        let reclaim = rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .stack_size(16 * K)
-            .thread_name(|_| "reclaim-worker".to_string())
-            .build()?;
-        let buf_pool = BUF_POOL.get().unwrap();
-        async move {
-            while let Some((buf, n)) = rx.recv().await {
-                let buf: Box<[u8]> = buf;
-                match send_socket.send(&buf[..n]).await {
-                    Ok(n) => debug!("send {n} packets to {remote}"),
-                    Err(e) => {
-                        error!("{e}");
-                        break;
-                    }
-                };
-                reclaim.spawn_fifo(move || buf_pool.push(buf).unwrap());
-            }
-        }
-    });
+
     info!("service started");
-    let recv_handle = tokio::spawn({
-        let buf_pool = BUF_POOL.get().unwrap();
-        let thread_pool = THREAD_POOL.get().unwrap();
+    let remote_send = tokio::spawn(send(rx_from_local, remote.clone()));
+    let remote_recv = tokio::spawn(recv(tx_to_local, remote));
+    let local_send = tokio::spawn(send(rx_from_remote, local.clone()));
+    let local_recv = tokio::spawn(recv(tx_to_remote, local));
+
+    let remote_send_abt = remote_send.abort_handle();
+    let remote_recv_abt = remote_recv.abort_handle();
+    let local_send_abt = local_send.abort_handle();
+    let local_recv_abt = local_recv.abort_handle();
+    tokio::select! {
+        r = signal::ctrl_c() => {
+            r.unwrap();
+            remote_send_abt.abort();
+            remote_recv_abt.abort();
+            local_send_abt.abort();
+            local_recv_abt.abort();
+            info!("shutting down");
+            Ok(ExitCode::SUCCESS)
+        }
+        _ = remote_send => Ok(ExitCode::FAILURE),
+        _ = remote_recv => Ok(ExitCode::FAILURE),
+        _ = local_send => Ok(ExitCode::FAILURE),
+        _ = local_recv => Ok(ExitCode::FAILURE),
+    }
+}
+
+async fn send(mut rx: Receiver<(Box<[u8]>, usize)>, socket: Arc<UdpSocket>) {
+    let thread_pool = THREAD_POOL.get().unwrap();
+    let buf_pool = BUF_POOL.get().unwrap();
+    while let Some((buf, n)) = rx.recv().await {
+        let buf: Box<[u8]> = buf;
+        if let Err(e) = socket.send(&buf[..n]).await {
+            error!("{e}");
+            break;
+        };
+        thread_pool.spawn(move || buf_pool.push(buf).unwrap());
+    }
+}
+
+async fn recv(tx: Sender<(Box<[u8]>, usize)>, socket: Arc<UdpSocket>) {
+    let buf_pool = BUF_POOL.get().unwrap();
+    let thread_pool = THREAD_POOL.get().unwrap();
+    let token = unsafe { TOKEN };
+    let is_listen = Arc::new(RwLock::new(false));
+    let last_seen = Arc::new(RwLock::new(Instant::now()));
+    tokio::spawn({
+        let socket = socket.clone();
+        let last_seen = last_seen.clone();
+        let is_listen = is_listen.clone();
         async move {
             loop {
-                let mut buf = match buf_pool.pop() {
-                    Some(b) => b,
-                    None => {
-                        tokio::task::yield_now().await;
-                        continue;
-                    }
-                };
-                let tx = tx.clone();
-                match listen.recv(buf.as_mut()).await {
-                    Ok(0) => {
-                        error!("zero sized recv");
-                        break;
-                    }
-                    Ok(n) => {
-                        thread_pool.spawn_fifo(move || {
-                            if token != 0 {
-                                buf[..n].iter_mut().for_each(|b| *b ^= token);
-                            }
-                            if let Err(TrySendError::Full((buf, n))) = tx.try_send((buf, n)) {
-                                warn!("blocked");
-                                _ = tx.blocking_send((buf, n));
-                            };
-                        });
-                    }
-                    Err(e) => {
-                        error!("{e}");
-                        break;
-                    }
+                time::sleep(Duration::from_secs(2)).await;
+                if *is_listen.read().await
+                    && let Ok(addr) = socket.peer_addr()
+                    && last_seen.read().await.elapsed() > Duration::from_secs(2)
+                {
+                    info!("client timeout {addr}");
+                    if socket.connect("[::]:0").await.is_err() {
+                        socket.connect("0.0.0.0:0").await.unwrap();
+                    };
+                    debug!("removed local connect address: {addr}");
+                    *is_listen.write().await = false;
                 }
             }
         }
     });
-    let recv_abt = recv_handle.abort_handle();
-    let send_abt = send_handle.abort_handle();
-    tokio::select! {
-        r = signal::ctrl_c() => {
-            r.unwrap();
-            recv_abt.abort();
-            send_abt.abort();
-            info!("shutting down");
+    loop {
+        let mut buf = match buf_pool.pop() {
+            Some(b) => b,
+            None => {
+                tokio::task::yield_now().await;
+                continue;
+            }
+        };
+        let tx = tx.clone();
+        match socket.recv_from(buf.as_mut()).await {
+            Ok((0, _)) => {
+                error!("zero sized recv");
+                break;
+            }
+            Ok((n, addr)) => {
+                if socket.peer_addr().is_err() {
+                    *is_listen.write().await = true;
+                    socket.connect(addr).await.unwrap();
+                    *last_seen.write().await = Instant::now();
+                } else if *is_listen.read().await {
+                    socket.connect(addr).await.unwrap();
+                    *last_seen.write().await = Instant::now();
+                }
+                thread_pool.spawn_fifo(move || {
+                    if token != 0 {
+                        buf[..n].iter_mut().for_each(|b| *b ^= token);
+                    }
+                    if let Err(TrySendError::Full((buf, n))) = tx.try_send((buf, n)) {
+                        warn!("blocked");
+                        _ = tx.blocking_send((buf, n));
+                    };
+                });
+            }
+            Err(e) => {
+                error!("{e}");
+                break;
+            }
         }
-        _ = recv_handle => {},
-        _ = send_handle => {},
     }
-    Ok(ExitCode::SUCCESS)
 }

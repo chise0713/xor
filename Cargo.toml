@@ -1,6 +1,6 @@
 [package]
 name = "xor"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
@@ -12,6 +12,7 @@ tokio = { version = "^1.49", features = [
     "net",
     "sync",
     "signal",
+    "time",
 ] }
 supershorty = "^0.2.1"
 env_logger = { version = "^0.11", default-features = false, features = [
@@ -19,7 +20,7 @@ env_logger = { version = "^0.11", default-features = false, features = [
 ] }
 log = "^0.4"
 rayon = "^1.11"
-crossbeam-queue = "0.3.12"
+crossbeam-queue = "^0.3.12"
 
 [profile.release]
 opt-level = 3
