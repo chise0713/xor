@@ -1,9 +1,7 @@
-use std::sync::atomic::Ordering;
-
 use log::error;
 use tokio::sync::oneshot::Sender;
 
-use crate::{SHUTDOWN, buf_pool::AlignBox};
+use crate::{buf_pool::AlignBox, shutdown};
 
 pub fn xor(tx: Sender<AlignBox>, mut buf: AlignBox, n: usize, token: u8) {
     #[inline(always)]
@@ -29,7 +27,7 @@ pub fn xor(tx: Sender<AlignBox>, mut buf: AlignBox, n: usize, token: u8) {
     suffix.iter_mut().for_each(|b| *b ^= token);
 
     if tx.send(buf).is_err() {
-        SHUTDOWN.store(true, Ordering::Relaxed);
+        shutdown::set(true);
         error!("receiver is dropped");
     };
 }

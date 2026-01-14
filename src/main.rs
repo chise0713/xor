@@ -2,6 +2,7 @@ mod args;
 mod buf_pool;
 mod local;
 mod logger;
+mod shutdown;
 mod socket;
 mod thread_pool;
 mod xor;
@@ -10,7 +11,7 @@ use std::{
     net::SocketAddr,
     ops::Mul as _,
     process::ExitCode,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -41,7 +42,6 @@ const K: usize = 2usize.pow(10);
 const M: usize = K.pow(2);
 
 static POOL_SEM: Semaphore = Semaphore::const_new(0);
-static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 fn main() -> Result<ExitCode> {
     let Args {
@@ -111,7 +111,7 @@ fn main() -> Result<ExitCode> {
         })
         .build()?;
 
-    crate::local::START.set(Instant::now())?;
+    local::init_started_at();
     let sockets = Sockets::new(&listen_address, &remote_address)?;
     logger::init();
 
@@ -159,19 +159,16 @@ impl AsyncMain {
 }
 
 async fn watch_dog(time_out: f64) {
-    use crate::local::{CONNECTED, LAST_SEEN, START};
     let socket = Socket::Local.get();
-    let start = START.get().unwrap();
+    let start = local::started_at();
     loop {
         let timeout_dur = Duration::from_secs_f64(time_out);
         time::sleep(Duration::from_secs_f64(time_out)).await;
-        if !CONNECTED.load(Ordering::Relaxed) {
+        if !local::is_connected() {
             continue;
         }
 
-        let dur = start
-            .elapsed()
-            .saturating_sub(Duration::from_millis(LAST_SEEN.load(Ordering::Relaxed)));
+        let dur = start.elapsed().saturating_sub(local::last_seen());
         if dur > timeout_dur {
             if let Ok(addr) = socket.peer_addr() {
                 info!("client timeout {addr}");
@@ -179,11 +176,11 @@ async fn watch_dog(time_out: f64) {
                     && socket.connect("0.0.0.0:0").await.is_err()
                 {
                     error!("failed to disconnect {addr}");
-                    SHUTDOWN.store(true, Ordering::Relaxed);
+                    shutdown::set(true);
                     return;
                 };
             }
-            CONNECTED.store(false, Ordering::Relaxed);
+            local::set_connected(false);
         }
     }
 }
@@ -195,13 +192,7 @@ async fn send(
     current_socket: Socket,
     _permit: SemaphorePermit<'_>,
 ) {
-    use crate::local::{LAST_SEEN, START};
-    LAST_SEEN.store(
-        Instant::now()
-            .duration_since(*START.get().unwrap())
-            .as_millis() as u64,
-        Ordering::Relaxed,
-    );
+    local::set_last_seen(Instant::now());
 
     let buf_pool = buf_pool::get();
     if token != 0 {
@@ -211,7 +202,7 @@ async fn send(
         });
 
         let Ok(b) = rx.await else {
-            SHUTDOWN.store(true, Ordering::Relaxed);
+            shutdown::set(true);
             error!("sender dropped without sending");
             return;
         };
@@ -220,32 +211,24 @@ async fn send(
 
     let socket = current_socket.get();
     if let Err(e) = socket.send(&buf[..n]).await {
-        if SHUTDOWN
-            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
+        if shutdown::cmp_exchange(false, true) {
             error!("{e}");
         }
         return;
     };
 
     if buf_pool.push(buf).is_err() {
+        shutdown::set(true);
         error!("failed to push buf back");
-        SHUTDOWN.store(true, Ordering::Relaxed);
     }
 }
 
 async fn connect(current_socket: Socket, addr: SocketAddr) {
-    use crate::local::CONNECTED;
-
-    if CONNECTED
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_ok()
-    {
+    if local::cmp_exchange_connected(false, true) {
         if current_socket.get().connect(addr).await.is_ok() {
             info!("connected client {addr}");
         } else {
-            CONNECTED.store(false, Ordering::Relaxed);
+            local::set_connected(false);
         }
     }
 }
@@ -256,13 +239,13 @@ async fn recv(token: u8, current_socket: Socket) {
 
     let try_push = |buf: AlignBox| {
         if buf_pool.push(buf).is_err() {
+            shutdown::set(true);
             error!("failed to push buf back");
-            SHUTDOWN.store(true, Ordering::Relaxed);
         }
     };
 
     loop {
-        if SHUTDOWN.load(Ordering::Relaxed) {
+        if shutdown::shutdown() {
             return;
         }
 
@@ -291,7 +274,7 @@ async fn recv(token: u8, current_socket: Socket) {
                     continue;
                 }
                 error!("failed to aquire permit: {}", e);
-                SHUTDOWN.store(true, Ordering::Relaxed);
+                shutdown::set(true);
                 return;
             }
         };
