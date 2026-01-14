@@ -389,16 +389,12 @@ fn xor(tx: Sender<AlignBox>, mut buf: AlignBox, n: usize, token: u8) {
         let t = token as u64;
         t | (t << 8) | (t << 16) | (t << 24) | (t << 32) | (t << 40) | (t << 48) | (t << 56)
     }
-    static mut TOKEN_U64: u64 = u64::MIN;
 
     let buf_ref = &mut buf[..n];
 
     let (prefix, middle, suffix) = unsafe { buf_ref.align_to_mut() };
 
-    if unsafe { TOKEN_U64 } == u64::MIN {
-        unsafe { TOKEN_U64 = token_to_u64(token) };
-    }
-    let token_u64 = unsafe { TOKEN_U64 };
+    let token_u64 = token_to_u64(token);
 
     prefix.iter_mut().for_each(|b| *b ^= token);
     middle // longer align for simd
