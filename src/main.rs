@@ -270,26 +270,24 @@ fn main() -> Result<ExitCode> {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     };
-    let time_out = if let Some(time_out) = time_out_f64_secs {
-        if time_out == 0. {
-            Args::usage();
-            return Ok(ExitCode::FAILURE);
-        }
-        time_out
-    } else {
-        2.
-    };
-    let token = if let Some(token) = token_hex_u8 {
-        let Some(s) = token.strip_prefix("0x") else {
-            anyhow::bail!("not a hexadecimal string")
-        };
-        u8::from_str_radix(s, 16)?
-    } else {
+
+    let time_out = time_out_f64_secs.unwrap_or(2.);
+    if time_out == 0. {
+        Args::usage();
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let Some(token) = token_hex_u8.and_then(|token| {
+        token
+            .strip_prefix("0x")
+            .and_then(|s| u8::from_str_radix(s, 16).ok())
+    }) else {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     };
+
     let limit = buffer_limit_usize.unwrap_or(K);
-    let mtu = mtu_usize.unwrap_or(16384 + LINK_PAYLOAD_OFFSET);
+    let mtu = mtu_usize.unwrap_or(2usize.pow(128) + LINK_PAYLOAD_OFFSET);
     if mtu > LINK_MTU_MAX {
         Args::usage();
         return Ok(ExitCode::FAILURE);
