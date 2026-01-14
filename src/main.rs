@@ -2,7 +2,7 @@ use std::{
     fmt::Display,
     io::Write as _,
     net::{SocketAddr, UdpSocket as StdUdpSocket},
-    ops::Not,
+    ops::{Deref, DerefMut, Not},
     process::ExitCode,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     thread,
@@ -40,7 +40,7 @@ const SEND_BUF_SIZE: usize = M;
 
 static RAW_SLICE: [u8; UDP_PAYLOAD_MAX] = [0; _];
 
-static BUF_POOL: OnceCell<ArrayQueue<Box<[u8]>>> = OnceCell::const_new();
+static BUF_POOL: OnceCell<ArrayQueue<AlignBox>> = OnceCell::const_new();
 static THREAD_POOL: OnceCell<ThreadPool> = OnceCell::const_new();
 static POOL_SEM: Semaphore = Semaphore::const_new(0);
 
@@ -60,6 +60,30 @@ mod local {
     pub static CONNECTED: AtomicBool = AtomicBool::new(false);
     pub static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
     pub static START: OnceCell<Instant> = OnceCell::const_new();
+}
+
+#[derive(Debug)]
+#[repr(align(64))]
+struct AlignBox(Box<[u8]>);
+
+impl From<&[u8]> for AlignBox {
+    fn from(value: &[u8]) -> Self {
+        Self(Box::from(value))
+    }
+}
+
+impl Deref for AlignBox {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for AlignBox {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -118,7 +142,7 @@ fn init_buf_pool(limit: usize, payload_max: usize) -> Result<()> {
     BUF_POOL.set(ArrayQueue::new(limit))?;
     (0..limit).for_each({
         let pool = BUF_POOL.get().unwrap();
-        |_| pool.push(Box::from(&RAW_SLICE[..payload_max])).unwrap()
+        |_| pool.push((&RAW_SLICE[..payload_max]).into()).unwrap()
     });
     POOL_SEM.add_permits(limit);
     Ok(())
@@ -133,10 +157,10 @@ fn init_thread_pool(enable: bool) -> Result<()> {
             .num_threads(
                 thread::available_parallelism()?
                     .get()
-                    .saturating_sub(WORKER_THREADS - 1) // sub 1 main thread
+                    .saturating_sub(WORKER_THREADS)
                     .max(2),
             )
-            .stack_size(32 * K)
+            .stack_size(24 * K)
             .thread_name(|i| format!("xor-worker-{}", i))
             .build()?,
     )?;
@@ -230,7 +254,7 @@ impl Sockets {
         Ok(Self { local, remote })
     }
 
-    async fn convert(self) -> Result<()> {
+    fn convert(self) -> Result<()> {
         LOCAL_SOCKET.set(UdpSocket::from_std(self.local)?)?;
         REMOTE_SOCKET.set(UdpSocket::from_std(self.remote)?)?;
         Ok(())
@@ -276,7 +300,7 @@ fn main() -> Result<ExitCode> {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     };
-    let limit = buffer_limit_usize.unwrap_or(768);
+    let limit = buffer_limit_usize.unwrap_or(K);
     let mtu = mtu_usize.unwrap_or(16384 + LINK_PAYLOAD_OFFSET);
     if mtu > LINK_MTU_MAX {
         Args::usage();
@@ -291,48 +315,47 @@ fn main() -> Result<ExitCode> {
     init_logger();
     let sockets = Sockets::new(&listen_address, &remote_address)?;
 
-    let _main0 = Main0 {
-        time_out,
-        token,
-        sockets,
-    };
-    rt.block_on(main0(_main0))
+    rt.block_on(
+        AsyncMain {
+            time_out,
+            token,
+            sockets,
+        }
+        .enter(),
+    )
 }
 
-struct Main0 {
+struct AsyncMain {
     time_out: f64,
     token: u8,
     sockets: Sockets,
 }
 
-async fn main0(main0: Main0) -> Result<ExitCode> {
-    let Main0 {
-        time_out,
-        token,
-        sockets,
-    } = main0;
-    sockets.convert().await?;
+impl AsyncMain {
+    async fn enter(self) -> Result<ExitCode> {
+        self.sockets.convert()?;
 
-    let mut set = JoinSet::new();
-    set.spawn(recv(token, Socket::Local));
-    set.spawn(recv(token, Socket::Remote));
+        info!("service started");
 
-    info!("service started");
+        let mut join_set = JoinSet::new();
+        join_set.spawn(recv(self.token, Socket::Local));
+        join_set.spawn(recv(self.token, Socket::Remote));
 
-    tokio::select! {
-        _ = signal::ctrl_c() => {
-            info!("shutting down");
-            return Ok(ExitCode::SUCCESS);
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                info!("shutting down");
+                return Ok(ExitCode::SUCCESS);
+            }
+            _ = watch_dog(self.time_out) => {
+                error!("the watch dog exited prematurely");
+            },
+            _ = join_set.join_next() => {
+                error!("a network recv task exited prematurely");
+            },
         }
-        _ = watch_dog(time_out) => {
-            error!("the watch dog exited prematurely");
-        },
-        _ = set.join_next() => {
-            error!("a network recv task exited prematurely");
-        },
-    }
 
-    Ok(ExitCode::FAILURE)
+        Ok(ExitCode::FAILURE)
+    }
 }
 
 async fn watch_dog(time_out: f64) {
@@ -360,7 +383,7 @@ async fn watch_dog(time_out: f64) {
 }
 
 async fn send(
-    mut buf: Box<[u8]>,
+    mut buf: AlignBox,
     n: usize,
     token: u8,
     current_socket: Socket,
@@ -374,12 +397,26 @@ async fn send(
         Ordering::Relaxed,
     );
     let buf_pool = BUF_POOL.get().unwrap();
-    let buf = if token != 0 {
+    let buf: AlignBox = if token != 0 {
         let (tx, rx) = oneshot::channel();
+
         THREAD_POOL.get().unwrap().spawn_fifo(move || {
-            buf[..n].iter_mut().for_each(|b| *b ^= token);
+            let buf_ref = &mut buf[..n];
+
+            let (prefix, middle, suffix) = unsafe { buf_ref.align_to_mut() };
+
+            #[expect(unnecessary_transmutes)] // for zerocopy
+            let token_64: u64 = unsafe { std::mem::transmute([token; 8]) };
+
+            prefix.iter_mut().for_each(|b| *b ^= token);
+            middle // longer align for simd
+                .iter_mut()
+                .for_each(|chunk: &mut u64| *chunk ^= token_64);
+            suffix.iter_mut().for_each(|b| *b ^= token);
+
             tx.send(buf).unwrap();
         });
+
         let Ok(buf) = rx.await else {
             SHUTDOWN.store(true, Ordering::Relaxed);
             return;
@@ -410,10 +447,6 @@ async fn send(
 async fn connect(current_socket: Socket, addr: SocketAddr) {
     use crate::local::CONNECTED;
 
-    if !matches!(current_socket, Socket::Local) {
-        return;
-    }
-
     if CONNECTED
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
@@ -430,7 +463,7 @@ async fn recv(token: u8, current_socket: Socket) {
     let buf_pool = BUF_POOL.get().unwrap();
     let socket = current_socket.get();
 
-    let try_push = |buf: Box<[u8]>| {
+    let try_push = |buf: AlignBox| {
         if buf_pool.push(buf).is_err() {
             error!("failed to push buf back");
             SHUTDOWN.store(true, Ordering::Relaxed);
@@ -443,7 +476,7 @@ async fn recv(token: u8, current_socket: Socket) {
         }
 
         let Some(mut buf) = buf_pool.pop() else {
-            let mut trashing = RAW_SLICE;
+            let mut trashing = [0u8];
             let _ = socket.recv_from(&mut trashing).await;
             warn!("buf_pool is empty, dropping packet");
             continue;
@@ -472,7 +505,9 @@ async fn recv(token: u8, current_socket: Socket) {
             }
         };
 
-        tokio::spawn(connect(current_socket, addr));
+        if matches!(current_socket, Socket::Local) {
+            tokio::spawn(connect(current_socket, addr));
+        }
         tokio::spawn(send(buf, n, token, !current_socket, _permit));
     }
 }
