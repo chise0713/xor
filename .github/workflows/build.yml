@@ -136,4 +136,4 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.platform.target }}
-          path: target/${{ matrix.platform.target }}/release/${{ env.BINARY_NAME }}
+          path: target/${{ matrix.platform.target }}/release/${{ env.BINARY_NAME }}.exe
