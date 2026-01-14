@@ -67,12 +67,29 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: "--locked --release"
           strip: true
+      - name: Build binary (io-uring)
+        uses: houseabsolute/actions-rust-cross@v1
+        if: contains(matrix.platform.target, 'linux') && contains(matrix.platform.target, '64')
+        env:
+          RUSTFLAGS: "--cfg tokio_unstable"
+        with:
+          rust-cache-parameters: '{"prefix-key":"cross"}'
+          command: "build"
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release --features io-uring --target-dir target/io-uring/"
+          strip: true
       - name: Upload binary artifact
         if: ${{ matrix.platform.runs-on != 'windows-latest' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.platform.target }}
           path: target/${{ matrix.platform.target }}/release/${{ env.BINARY_NAME }}
+      - name: Upload binary artifact (io-uring)
+        if: contains(matrix.platform.target, 'linux') && contains(matrix.platform.target, '64')
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.platform.target }}-io-uring
+          path: target/io-uring/${{ matrix.platform.target }}/release/${{ env.BINARY_NAME }}
       - name: Upload binary artifact
         if: ${{ matrix.platform.runs-on == 'windows-latest' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

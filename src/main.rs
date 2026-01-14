@@ -1,5 +1,7 @@
 use std::{
+    fmt::Display,
     io::Write as _,
+    net::{SocketAddr, UdpSocket as StdUdpSocket},
     ops::Not,
     process::ExitCode,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -10,16 +12,17 @@ use std::{
 use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
 use env_logger::{Env, Target};
-use log::{Level, error, info};
+use log::{Level, error, info, warn};
+use rayon::ThreadPool;
+use socket2::{Domain, Protocol, Type};
 use tokio::{
     net::UdpSocket,
-    runtime::Builder,
+    runtime::{Builder, Runtime},
     signal,
-    sync::{OnceCell, Semaphore, SemaphorePermit},
+    sync::{OnceCell, Semaphore, SemaphorePermit, TryAcquireError, oneshot},
+    task::JoinSet,
     time::{self},
 };
-
-use crate::local::START;
 
 const LINK_MTU_MAX: usize = 65535;
 const UDP_HEADER: usize = 8;
@@ -29,9 +32,16 @@ const UDP_PAYLOAD_MAX: usize = LINK_MTU_MAX - LINK_PAYLOAD_OFFSET;
 
 const WORKER_THREADS: usize = 4;
 
+const K: usize = 2usize.pow(10);
+const M: usize = K.pow(2);
+
+const RECV_BUF_SIZE: usize = 4 * M;
+const SEND_BUF_SIZE: usize = M;
+
 static RAW_SLICE: [u8; UDP_PAYLOAD_MAX] = [0; _];
 
 static BUF_POOL: OnceCell<ArrayQueue<Box<[u8]>>> = OnceCell::const_new();
+static THREAD_POOL: OnceCell<ThreadPool> = OnceCell::const_new();
 static POOL_SEM: Semaphore = Semaphore::const_new(0);
 
 static LOCAL_SOCKET: OnceCell<UdpSocket> = OnceCell::const_new();
@@ -78,6 +88,15 @@ impl Not for Socket {
     }
 }
 
+impl Display for Socket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Local => "local",
+            Self::Remote => "remote",
+        })
+    }
+}
+
 #[derive(supershorty::Args, Debug)]
 #[args(name = "xor")]
 struct Args {
@@ -89,7 +108,7 @@ struct Args {
     mtu_usize: Option<usize>,
     #[arg(flag = 'r', help = "remote address")]
     remote_address: Option<Box<str>>,
-    #[arg(flag = 'o', help = "e.g. 2.5 is 2.5 secs")]
+    #[arg(flag = 'o', help = "client timeout in seconds")]
     time_out_f64_secs: Option<f64>,
     #[arg(flag = 't', help = "e.g. 0xFF")]
     token_hex_u8: Option<Box<str>>,
@@ -102,6 +121,25 @@ fn init_buf_pool(limit: usize, payload_max: usize) -> Result<()> {
         |_| pool.push(Box::from(&RAW_SLICE[..payload_max])).unwrap()
     });
     POOL_SEM.add_permits(limit);
+    Ok(())
+}
+
+fn init_thread_pool(enable: bool) -> Result<()> {
+    if !enable {
+        return Ok(());
+    }
+    THREAD_POOL.set(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(
+                thread::available_parallelism()?
+                    .get()
+                    .saturating_sub(WORKER_THREADS - 1) // sub 1 main thread
+                    .max(2),
+            )
+            .stack_size(32 * K)
+            .thread_name(|i| format!("xor-worker-{}", i))
+            .build()?,
+    )?;
     Ok(())
 }
 
@@ -129,11 +167,74 @@ fn init_logger() {
         .init()
 }
 
-async fn init_sockets(listen_address: &str, remote_address: &str) -> Result<()> {
-    LOCAL_SOCKET.set(UdpSocket::bind(listen_address).await?)?;
-    REMOTE_SOCKET.set(UdpSocket::bind("[::]:0").await?)?;
-    REMOTE_SOCKET.get().unwrap().connect(remote_address).await?;
-    Ok(())
+fn init_runtime(use_all_threads: bool) -> Result<Runtime> {
+    Ok(Builder::new_multi_thread()
+        .enable_all()
+        .thread_name_fn(|| {
+            static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
+            let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
+            format!("tokio-runtime-{}", id)
+        })
+        .worker_threads(if use_all_threads {
+            thread::available_parallelism()?.get()
+        } else {
+            WORKER_THREADS
+        })
+        .build()?)
+}
+
+struct Sockets {
+    local: StdUdpSocket,
+    remote: StdUdpSocket,
+}
+
+impl Sockets {
+    fn new(listen_address: &str, remote_address: &str) -> Result<Self> {
+        let listen_address: SocketAddr = listen_address.parse()?;
+        let remote_address: SocketAddr = remote_address.parse()?;
+        let glob: SocketAddr = "[::]:0".parse()?;
+
+        let local_domain = match listen_address {
+            SocketAddr::V4(_) => Domain::IPV4,
+            SocketAddr::V6(_) => Domain::IPV6,
+        };
+
+        let local = socket2::Socket::new(local_domain, Type::DGRAM, Some(Protocol::UDP))?;
+        let remote = socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+
+        local.set_reuse_address(true)?;
+        remote.set_reuse_address(true)?;
+
+        if matches!(local_domain, Domain::IPV6) {
+            local.set_only_v6(false)?;
+        }
+        remote.set_only_v6(false)?;
+
+        local.set_nonblocking(true)?;
+        remote.set_nonblocking(true)?;
+
+        local.set_recv_buffer_size(RECV_BUF_SIZE)?;
+        remote.set_recv_buffer_size(RECV_BUF_SIZE)?;
+
+        local.set_send_buffer_size(SEND_BUF_SIZE)?;
+        remote.set_send_buffer_size(SEND_BUF_SIZE)?;
+
+        local.bind(&listen_address.into())?;
+        remote.bind(&glob.into())?;
+
+        remote.connect(&remote_address.into())?;
+
+        let local = StdUdpSocket::from(local);
+        let remote = StdUdpSocket::from(remote);
+
+        Ok(Self { local, remote })
+    }
+
+    async fn convert(self) -> Result<()> {
+        LOCAL_SOCKET.set(UdpSocket::from_std(self.local)?)?;
+        REMOTE_SOCKET.set(UdpSocket::from_std(self.remote)?)?;
+        Ok(())
+    }
 }
 
 fn main() -> Result<ExitCode> {
@@ -150,6 +251,7 @@ fn main() -> Result<ExitCode> {
             return Ok(e);
         }
     };
+
     let Some(listen_address) = listen_address else {
         Args::usage();
         return Ok(ExitCode::FAILURE);
@@ -174,63 +276,49 @@ fn main() -> Result<ExitCode> {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     };
-    let limit = buffer_limit_usize.unwrap_or(512);
-    let mtu = mtu_usize.unwrap_or(1500);
+    let limit = buffer_limit_usize.unwrap_or(768);
+    let mtu = mtu_usize.unwrap_or(16384 + LINK_PAYLOAD_OFFSET);
     if mtu > LINK_MTU_MAX {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     }
     let payload_max = mtu - LINK_PAYLOAD_OFFSET;
-    let rt = Builder::new_multi_thread()
-        .enable_all()
-        .max_blocking_threads(
-            thread::available_parallelism()?
-                .get()
-                .saturating_sub(WORKER_THREADS)
-                .max(2),
-        )
-        .thread_keep_alive(Duration::from_secs(u64::MAX))
-        .thread_name_fn(|| {
-            static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
-            let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
-            format!("xor-{}", id)
-        })
-        .worker_threads(WORKER_THREADS)
-        .build()?;
 
-    START.set(Instant::now())?;
+    let rt = init_runtime(token == 0)?;
+    crate::local::START.set(Instant::now())?;
     init_buf_pool(limit, payload_max)?;
+    init_thread_pool(token != 0)?;
     init_logger();
+    let sockets = Sockets::new(&listen_address, &remote_address)?;
 
-    rt.block_on(main0(Main0 {
-        listen_address: &listen_address,
-        remote_address: &remote_address,
+    let _main0 = Main0 {
         time_out,
         token,
-    }))
+        sockets,
+    };
+    rt.block_on(main0(_main0))
 }
 
-struct Main0<'a> {
-    listen_address: &'a str,
-    remote_address: &'a str,
+struct Main0 {
     time_out: f64,
     token: u8,
+    sockets: Sockets,
 }
 
-async fn main0(
-    Main0 {
-        listen_address,
-        remote_address,
+async fn main0(main0: Main0) -> Result<ExitCode> {
+    let Main0 {
         time_out,
         token,
-    }: Main0<'_>,
-) -> Result<ExitCode> {
-    init_sockets(listen_address, remote_address).await?;
+        sockets,
+    } = main0;
+    sockets.convert().await?;
 
-    info!("service started");
-    let mut set = tokio::task::JoinSet::new();
+    let mut set = JoinSet::new();
     set.spawn(recv(token, Socket::Local));
     set.spawn(recv(token, Socket::Remote));
+
+    info!("service started");
+
     tokio::select! {
         _ = signal::ctrl_c() => {
             info!("shutting down");
@@ -240,7 +328,7 @@ async fn main0(
             error!("the watch dog exited prematurely");
         },
         _ = set.join_next() => {
-            error!("a network recv exited prematurely");
+            error!("a network recv task exited prematurely");
         },
     }
 
@@ -275,21 +363,33 @@ async fn send(
     mut buf: Box<[u8]>,
     n: usize,
     token: u8,
-    socket: Socket,
+    current_socket: Socket,
     _permit: SemaphorePermit<'_>,
 ) {
+    use crate::local::{LAST_SEEN, START};
+    LAST_SEEN.store(
+        Instant::now()
+            .duration_since(*START.get().unwrap())
+            .as_millis() as u64,
+        Ordering::Relaxed,
+    );
     let buf_pool = BUF_POOL.get().unwrap();
-    let buf = tokio::task::spawn_blocking(move || {
-        buf[..n].iter_mut().for_each(|b| *b ^= token);
+    let buf = if token != 0 {
+        let (tx, rx) = oneshot::channel();
+        THREAD_POOL.get().unwrap().spawn_fifo(move || {
+            buf[..n].iter_mut().for_each(|b| *b ^= token);
+            tx.send(buf).unwrap();
+        });
+        let Ok(buf) = rx.await else {
+            SHUTDOWN.store(true, Ordering::Relaxed);
+            return;
+        };
         buf
-    })
-    .await
-    .unwrap_or_default();
-    if buf.is_empty() {
-        SHUTDOWN.store(true, Ordering::Relaxed);
-        return;
-    }
-    let socket = socket.get();
+    } else {
+        buf
+    };
+
+    let socket = current_socket.get();
     if let Err(e) = socket.send(&buf[..n]).await {
         if SHUTDOWN
             .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
@@ -299,50 +399,80 @@ async fn send(
         }
         return;
     };
-    buf_pool.push(buf).unwrap();
+
+    if buf_pool.push(buf).is_err() {
+        error!("failed to push buf back");
+        SHUTDOWN.store(true, Ordering::Relaxed);
+    }
+}
+
+#[inline(always)]
+async fn connect(current_socket: Socket, addr: SocketAddr) {
+    use crate::local::CONNECTED;
+
+    if !matches!(current_socket, Socket::Local) {
+        return;
+    }
+
+    if CONNECTED
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        if current_socket.get().connect(addr).await.is_ok() {
+            info!("connected client {addr}");
+        } else {
+            CONNECTED.store(false, Ordering::Relaxed);
+        }
+    }
 }
 
 async fn recv(token: u8, current_socket: Socket) {
-    use crate::local::{CONNECTED, LAST_SEEN};
-
     let buf_pool = BUF_POOL.get().unwrap();
     let socket = current_socket.get();
+
+    let try_push = |buf: Box<[u8]>| {
+        if buf_pool.push(buf).is_err() {
+            error!("failed to push buf back");
+            SHUTDOWN.store(true, Ordering::Relaxed);
+        }
+    };
 
     loop {
         if SHUTDOWN.load(Ordering::Relaxed) {
             return;
         }
-        let _permit = POOL_SEM.acquire().await.unwrap();
-        let mut buf = buf_pool.pop().unwrap();
-        match socket.recv_from(buf.as_mut()).await {
-            Ok((0, _)) => {
-                error!("zero sized recv");
-                break;
-            }
-            Ok((n, addr)) => {
-                LAST_SEEN.store(
-                    Instant::now()
-                        .duration_since(*START.get().unwrap())
-                        .as_millis() as u64,
-                    Ordering::Relaxed,
-                );
-                if matches!(current_socket, Socket::Local)
-                    && CONNECTED
-                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                        .is_ok()
-                {
-                    if socket.connect(addr).await.is_ok() {
-                        info!("connected client {addr}");
-                    } else {
-                        CONNECTED.store(false, Ordering::Relaxed);
-                    }
-                }
-                tokio::spawn(send(buf, n, token, !current_socket, _permit));
-            }
+
+        let Some(mut buf) = buf_pool.pop() else {
+            let mut trashing = RAW_SLICE;
+            let _ = socket.recv_from(&mut trashing).await;
+            warn!("buf_pool is empty, dropping packet");
+            continue;
+        };
+
+        let (n, addr) = match socket.recv_from(buf.as_mut()).await {
+            Ok(v) => v,
             Err(e) => {
+                try_push(buf);
                 error!("{e}");
                 break;
             }
-        }
+        };
+
+        let _permit = match POOL_SEM.try_acquire() {
+            Ok(p) => p,
+            Err(e) => {
+                if matches!(e, TryAcquireError::NoPermits) {
+                    warn!("{current_socket} socket backpressure, dropping packet");
+                    try_push(buf);
+                    continue;
+                }
+                error!("failed to aquire permit: {}", e);
+                SHUTDOWN.store(true, Ordering::Relaxed);
+                return;
+            }
+        };
+
+        tokio::spawn(connect(current_socket, addr));
+        tokio::spawn(send(buf, n, token, !current_socket, _permit));
     }
 }
