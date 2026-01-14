@@ -19,7 +19,10 @@ use tokio::{
     net::UdpSocket,
     runtime::{Builder, Runtime},
     signal,
-    sync::{OnceCell, Semaphore, SemaphorePermit, TryAcquireError, oneshot},
+    sync::{
+        OnceCell, Semaphore, SemaphorePermit, TryAcquireError,
+        oneshot::{self, Sender},
+    },
     task::JoinSet,
     time::{self},
 };
@@ -287,7 +290,7 @@ fn main() -> Result<ExitCode> {
     };
 
     let limit = buffer_limit_usize.unwrap_or(K);
-    let mtu = mtu_usize.unwrap_or(2usize.pow(128) + LINK_PAYLOAD_OFFSET);
+    let mtu = mtu_usize.unwrap_or(2usize.pow(14) + LINK_PAYLOAD_OFFSET);
     if mtu > LINK_MTU_MAX {
         Args::usage();
         return Ok(ExitCode::FAILURE);
@@ -380,6 +383,35 @@ async fn watch_dog(time_out: f64) {
     }
 }
 
+fn xor(tx: Sender<AlignBox>, mut buf: AlignBox, n: usize, token: u8) {
+    #[inline(always)]
+    fn token_to_u64(token: u8) -> u64 {
+        let t = token as u64;
+        t | (t << 8) | (t << 16) | (t << 24) | (t << 32) | (t << 40) | (t << 48) | (t << 56)
+    }
+    static mut TOKEN_U64: u64 = u64::MIN;
+
+    let buf_ref = &mut buf[..n];
+
+    let (prefix, middle, suffix) = unsafe { buf_ref.align_to_mut() };
+
+    if unsafe { TOKEN_U64 } == u64::MIN {
+        unsafe { TOKEN_U64 = token_to_u64(token) };
+    }
+    let token_u64 = unsafe { TOKEN_U64 };
+
+    prefix.iter_mut().for_each(|b| *b ^= token);
+    middle // longer align for simd
+        .iter_mut()
+        .for_each(|chunk: &mut u64| *chunk ^= token_u64);
+    suffix.iter_mut().for_each(|b| *b ^= token);
+
+    if tx.send(buf).is_err() {
+        SHUTDOWN.store(true, Ordering::Relaxed);
+        error!("receiver is dropped");
+    };
+}
+
 async fn send(
     mut buf: AlignBox,
     n: usize,
@@ -387,12 +419,7 @@ async fn send(
     current_socket: Socket,
     _permit: SemaphorePermit<'_>,
 ) {
-    #[inline(always)]
-    fn token_to_u64(token: u8) -> u64 {
-        let t = token as u64;
-        t | (t << 8) | (t << 16) | (t << 24) | (t << 32) | (t << 40) | (t << 48) | (t << 56)
-    }
-
+    use crate::local::{LAST_SEEN, START};
     LAST_SEEN.store(
         Instant::now()
             .duration_since(*START.get().unwrap())
@@ -400,40 +427,19 @@ async fn send(
         Ordering::Relaxed,
     );
 
-    static mut TOKEN_U64: u64 = u64::MIN;
-
-    use crate::local::{LAST_SEEN, START};
     let buf_pool = BUF_POOL.get().unwrap();
     if token != 0 {
         let (tx, rx) = oneshot::channel();
         THREAD_POOL.get().unwrap().spawn_fifo(move || {
-            let buf_ref = &mut buf[..n];
-
-            let (prefix, middle, suffix) = unsafe { buf_ref.align_to_mut() };
-
-            if unsafe { TOKEN_U64 } == u64::MIN {
-                unsafe { TOKEN_U64 = token_to_u64(token) };
-            }
-            let token_u64 = unsafe { TOKEN_U64 };
-
-            prefix.iter_mut().for_each(|b| *b ^= token);
-            middle // longer align for simd
-                .iter_mut()
-                .for_each(|chunk: &mut u64| *chunk ^= token_u64);
-            suffix.iter_mut().for_each(|b| *b ^= token);
-
-            if tx.send(buf).is_err() {
-                SHUTDOWN.store(true, Ordering::Relaxed);
-                error!("sender is dropped");
-            };
+            xor(tx, buf, n, token);
         });
 
-        if let Ok(b) = rx.await {
-            buf = b;
-        } else {
+        let Ok(b) = rx.await else {
             SHUTDOWN.store(true, Ordering::Relaxed);
+            error!("sender dropped without sending");
             return;
         };
+        buf = b;
     };
 
     let socket = current_socket.get();
