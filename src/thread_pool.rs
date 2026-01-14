@@ -4,7 +4,7 @@ use tokio::sync::OnceCell;
 
 use crate::K;
 
-pub static THREAD_POOL: OnceCell<ThreadPool> = OnceCell::const_new();
+static THREAD_POOL: OnceCell<ThreadPool> = OnceCell::const_new();
 
 pub fn init(compute_threads: usize) -> Result<()> {
     THREAD_POOL.set(
@@ -15,4 +15,8 @@ pub fn init(compute_threads: usize) -> Result<()> {
             .build()?,
     )?;
     Ok(())
+}
+
+pub fn get() -> &'static ThreadPool {
+    THREAD_POOL.get().unwrap()
 }

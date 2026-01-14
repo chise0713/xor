@@ -27,10 +27,9 @@ use tokio::{
 
 use crate::{
     args::{Args, Parse as _, Usage as _},
-    buf_pool::BUF_POOL,
+    buf_pool::AlignBox,
     socket::{Socket, Sockets},
-    thread_pool::THREAD_POOL,
-    xor::{AlignBox, xor},
+    xor::xor,
 };
 
 const LINK_MTU_MAX: usize = 65535;
@@ -204,10 +203,10 @@ async fn send(
         Ordering::Relaxed,
     );
 
-    let buf_pool = BUF_POOL.get().unwrap();
+    let buf_pool = buf_pool::get();
     if token != 0 {
         let (tx, rx) = oneshot::channel();
-        THREAD_POOL.get().unwrap().spawn_fifo(move || {
+        thread_pool::get().spawn_fifo(move || {
             xor(tx, buf, n, token);
         });
 
@@ -252,7 +251,7 @@ async fn connect(current_socket: Socket, addr: SocketAddr) {
 }
 
 async fn recv(token: u8, current_socket: Socket) {
-    let buf_pool = BUF_POOL.get().unwrap();
+    let buf_pool = buf_pool::get();
     let socket = current_socket.get();
 
     let try_push = |buf: AlignBox| {

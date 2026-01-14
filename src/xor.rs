@@ -1,61 +1,9 @@
-use std::{
-    alloc::{self, Layout},
-    ops::{Deref, DerefMut},
-    ptr::{self, NonNull},
-    sync::atomic::Ordering,
-};
+use std::sync::atomic::Ordering;
 
 use log::error;
 use tokio::sync::oneshot::Sender;
 
-use crate::SHUTDOWN;
-
-#[derive(Debug)]
-pub struct AlignBox {
-    ptr: NonNull<u8>,
-    len: usize,
-    layout: Layout,
-}
-
-unsafe impl Send for AlignBox {}
-unsafe impl Sync for AlignBox {}
-
-impl AlignBox {
-    pub fn new(size: usize) -> Self {
-        let layout = Layout::from_size_align(size, 64).unwrap();
-        unsafe {
-            let raw_ptr = alloc::alloc(layout);
-            let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
-            ptr::write_bytes(raw_ptr, 0, size);
-            Self {
-                ptr,
-                len: size,
-                layout,
-            }
-        }
-    }
-}
-
-impl Drop for AlignBox {
-    fn drop(&mut self) {
-        unsafe {
-            alloc::dealloc(self.ptr.as_ptr(), self.layout);
-        }
-    }
-}
-
-impl Deref for AlignBox {
-    type Target = [u8];
-    fn deref(&self) -> &Self::Target {
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-    }
-}
-
-impl DerefMut for AlignBox {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
-    }
-}
+use crate::{SHUTDOWN, buf_pool::AlignBox};
 
 pub fn xor(tx: Sender<AlignBox>, mut buf: AlignBox, n: usize, token: u8) {
     #[inline(always)]
