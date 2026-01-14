@@ -308,9 +308,9 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "supershorty"
-version = "0.2.1"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5699e0ceaf45aaf5348867669a6a84af14ca2d50eba97b930f6221e6ceb5ee28"
+checksum = "9b8e5e5ab2b3216dc04fc45f05bb60472e3817c165f03c3b66652cb23dd8cb55"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -460,7 +460,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "xor"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "crossbeam-queue",
