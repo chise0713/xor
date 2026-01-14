@@ -2,7 +2,6 @@ use std::{
     fmt::Display,
     net::{SocketAddr, UdpSocket as StdUdpSocket},
     ops::Not,
-    sync::atomic::{AtomicBool, Ordering},
 };
 
 use anyhow::Result;
@@ -17,8 +16,6 @@ const SEND_BUF_SIZE: usize = M;
 static LOCAL_SOCKET: OnceCell<UdpSocket> = OnceCell::const_new();
 static REMOTE_SOCKET: OnceCell<UdpSocket> = OnceCell::const_new();
 
-static CONVERTED: AtomicBool = AtomicBool::new(false);
-
 #[derive(Debug, Clone, Copy)]
 pub enum Socket {
     Local,
@@ -27,9 +24,6 @@ pub enum Socket {
 
 impl Socket {
     pub fn get(&self) -> &UdpSocket {
-        if !CONVERTED.load(Ordering::Acquire) {
-            panic!("sockets are not converted to `Socket`");
-        }
         match *self {
             Socket::Local => LOCAL_SOCKET.get().unwrap(),
             Socket::Remote => REMOTE_SOCKET.get().unwrap(),
@@ -107,7 +101,6 @@ impl Sockets {
     pub fn convert(self) -> Result<()> {
         LOCAL_SOCKET.set(UdpSocket::from_std(self.local)?)?;
         REMOTE_SOCKET.set(UdpSocket::from_std(self.remote)?)?;
-        CONVERTED.store(true, Ordering::Release);
         Ok(())
     }
 }
