@@ -30,8 +30,6 @@ const IPV6_HEADER: usize = 40;
 const LINK_PAYLOAD_OFFSET: usize = UDP_HEADER + IPV6_HEADER;
 const UDP_PAYLOAD_MAX: usize = LINK_MTU_MAX - LINK_PAYLOAD_OFFSET;
 
-const WORKER_THREADS: usize = 4;
-
 const K: usize = 2usize.pow(10);
 const M: usize = K.pow(2);
 
@@ -148,19 +146,11 @@ fn init_buf_pool(limit: usize, payload_max: usize) -> Result<()> {
     Ok(())
 }
 
-fn init_thread_pool(enable: bool) -> Result<()> {
-    if !enable {
-        return Ok(());
-    }
+fn init_thread_pool(compute_threads: usize) -> Result<()> {
     THREAD_POOL.set(
         rayon::ThreadPoolBuilder::new()
-            .num_threads(
-                thread::available_parallelism()?
-                    .get()
-                    .saturating_sub(WORKER_THREADS)
-                    .max(2),
-            )
-            .stack_size(24 * K)
+            .num_threads(compute_threads)
+            .stack_size(32 * K)
             .thread_name(|i| format!("xor-worker-{}", i))
             .build()?,
     )?;
@@ -191,7 +181,7 @@ fn init_logger() {
         .init()
 }
 
-fn init_runtime(use_all_threads: bool) -> Result<Runtime> {
+fn init_runtime(worker_threads: usize) -> Result<Runtime> {
     Ok(Builder::new_multi_thread()
         .enable_all()
         .thread_name_fn(|| {
@@ -199,11 +189,7 @@ fn init_runtime(use_all_threads: bool) -> Result<Runtime> {
             let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
             format!("tokio-runtime-{}", id)
         })
-        .worker_threads(if use_all_threads {
-            thread::available_parallelism()?.get()
-        } else {
-            WORKER_THREADS
-        })
+        .worker_threads(worker_threads)
         .build()?)
 }
 
@@ -294,7 +280,9 @@ fn main() -> Result<ExitCode> {
         2.
     };
     let token = if let Some(token) = token_hex_u8 {
-        let s = token.trim_start_matches("0x");
+        let Some(s) = token.strip_prefix("0x") else {
+            anyhow::bail!("not a hexadecimal string")
+        };
         u8::from_str_radix(s, 16)?
     } else {
         Args::usage();
@@ -308,10 +296,18 @@ fn main() -> Result<ExitCode> {
     }
     let payload_max = mtu - LINK_PAYLOAD_OFFSET;
 
-    let rt = init_runtime(token == 0)?;
+    let total_threads = thread::available_parallelism()?.get();
+    let worker_threads = total_threads.div_ceil(4);
+
+    let rt = init_runtime(if token == 0 {
+        total_threads
+    } else {
+        init_thread_pool(total_threads - worker_threads - 1)?; // minus 1 for main thread
+        worker_threads
+    })?;
+
     crate::local::START.set(Instant::now())?;
     init_buf_pool(limit, payload_max)?;
-    init_thread_pool(token != 0)?;
     init_logger();
     let sockets = Sockets::new(&listen_address, &remote_address)?;
 
@@ -335,11 +331,11 @@ impl AsyncMain {
     async fn enter(self) -> Result<ExitCode> {
         self.sockets.convert()?;
 
-        info!("service started");
-
         let mut join_set = JoinSet::new();
         join_set.spawn(recv(self.token, Socket::Local));
         join_set.spawn(recv(self.token, Socket::Remote));
+
+        info!("service started");
 
         tokio::select! {
             _ = signal::ctrl_c() => {
@@ -360,7 +356,7 @@ impl AsyncMain {
 
 async fn watch_dog(time_out: f64) {
     use crate::local::{CONNECTED, LAST_SEEN, START};
-    let socket = LOCAL_SOCKET.get().unwrap();
+    let socket = Socket::Local.get();
     let start = START.get().unwrap();
     loop {
         let timeout_dur = Duration::from_secs_f64(time_out);
@@ -373,8 +369,12 @@ async fn watch_dog(time_out: f64) {
         {
             if let Ok(addr) = socket.peer_addr() {
                 info!("client timeout {addr}");
-                if socket.connect("[::]:0").await.is_err() {
-                    socket.connect("0.0.0.0:0").await.unwrap();
+                if socket.connect("[::]:0").await.is_err()
+                    && socket.connect("0.0.0.0:0").await.is_err()
+                {
+                    error!("failed to disconnect {addr}");
+                    SHUTDOWN.store(true, Ordering::Relaxed);
+                    return;
                 };
             }
             CONNECTED.store(false, Ordering::Relaxed);
@@ -389,41 +389,53 @@ async fn send(
     current_socket: Socket,
     _permit: SemaphorePermit<'_>,
 ) {
-    use crate::local::{LAST_SEEN, START};
+    #[inline(always)]
+    fn token_to_u64(token: u8) -> u64 {
+        let t = token as u64;
+        t | (t << 8) | (t << 16) | (t << 24) | (t << 32) | (t << 40) | (t << 48) | (t << 56)
+    }
+
     LAST_SEEN.store(
         Instant::now()
             .duration_since(*START.get().unwrap())
             .as_millis() as u64,
         Ordering::Relaxed,
     );
-    let buf_pool = BUF_POOL.get().unwrap();
-    let buf: AlignBox = if token != 0 {
-        let (tx, rx) = oneshot::channel();
 
+    static mut TOKEN_U64: u64 = u64::MIN;
+
+    use crate::local::{LAST_SEEN, START};
+    let buf_pool = BUF_POOL.get().unwrap();
+    if token != 0 {
+        let (tx, rx) = oneshot::channel();
         THREAD_POOL.get().unwrap().spawn_fifo(move || {
             let buf_ref = &mut buf[..n];
 
             let (prefix, middle, suffix) = unsafe { buf_ref.align_to_mut() };
 
-            #[expect(unnecessary_transmutes)] // for zerocopy
-            let token_64: u64 = unsafe { std::mem::transmute([token; 8]) };
+            if unsafe { TOKEN_U64 } == u64::MIN {
+                unsafe { TOKEN_U64 = token_to_u64(token) };
+            }
+            let token_u64 = unsafe { TOKEN_U64 };
 
             prefix.iter_mut().for_each(|b| *b ^= token);
             middle // longer align for simd
                 .iter_mut()
-                .for_each(|chunk: &mut u64| *chunk ^= token_64);
+                .for_each(|chunk: &mut u64| *chunk ^= token_u64);
             suffix.iter_mut().for_each(|b| *b ^= token);
 
-            tx.send(buf).unwrap();
+            if tx.send(buf).is_err() {
+                SHUTDOWN.store(true, Ordering::Relaxed);
+                error!("sender is dropped");
+            };
         });
 
-        let Ok(buf) = rx.await else {
+        if let Ok(b) = rx.await {
+            buf = b;
+        } else {
             SHUTDOWN.store(true, Ordering::Relaxed);
             return;
         };
-        buf
-    } else {
-        buf
     };
 
     let socket = current_socket.get();

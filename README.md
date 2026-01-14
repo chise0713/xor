@@ -2,16 +2,17 @@
 
 ## Usage
 ```console
-usage: xor [-h] [-b buffer_limit_usize] [-l listen_address] [-m mtu_usize] [-r remote_address] [-t token_hex_u8]
+usage: xor [-h] [-b buffer_limit_usize] [-l listen_address] [-m mtu_usize] 
+                [-o time_out_f64_secs] [-r remote_address] [-t token_hex_u8]
 ```
 ## Example
 local:
 ```console
-xor -b2048 -l127.0.0.1:51820 -m1452 -r place.holder.local.arpa:65535 -t0xFF
+xor -b2048 -l127.0.0.1:51820 -m1452 -o2 -r place.holder.local.arpa:65535 -t0xFF
 ```
 remote:
 ```console
-xor -b2048 -l[::]:65535 -m1452 -r127.0.0.1:51820 -t0xFF
+xor -b2048 -l[::]:65535 -m1452 -o2 -r127.0.0.1:51820 -t0xFF
 ```
 
 ## License
