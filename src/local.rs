@@ -17,9 +17,9 @@ pub fn set_connected(val: bool) {
     CONNECTED.store(val, Ordering::Relaxed)
 }
 
-pub fn cmp_exchange_connected(a: bool, b: bool) -> bool {
+pub fn cmp_exchange_connected(current: bool, new: bool) -> bool {
     CONNECTED
-        .compare_exchange(a, b, Ordering::Release, Ordering::Acquire)
+        .compare_exchange(current, new, Ordering::Release, Ordering::Acquire)
         .is_ok()
 }
 

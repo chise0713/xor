@@ -6,9 +6,9 @@ pub fn set(val: bool) {
     SHUTDOWN.store(val, Ordering::Relaxed)
 }
 
-pub fn cmp_exchange(a: bool, b: bool) -> bool {
+pub fn cmp_exchange(current: bool, new: bool) -> bool {
     SHUTDOWN
-        .compare_exchange(a, b, Ordering::Release, Ordering::Acquire)
+        .compare_exchange(current, new, Ordering::Release, Ordering::Acquire)
         .is_ok()
 }
 
