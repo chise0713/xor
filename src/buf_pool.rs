@@ -1,16 +1,24 @@
 use std::{
     alloc::{self, Layout},
     ops::{Deref, DerefMut},
-    ptr::{self, NonNull},
+    ptr::NonNull,
+    thread,
 };
 
 use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
-use tokio::sync::OnceCell;
+use rayon::{
+    ThreadPoolBuilder,
+    iter::{IntoParallelIterator as _, ParallelIterator as _},
+};
+use tokio::sync::{OnceCell, Semaphore as SP, SetError};
 
-use crate::POOL_SEM;
+static POOL_SEM: SP = SP::const_new(0);
+
+const BUF_ALIGN: usize = 64;
 
 #[derive(Debug)]
+#[repr(align(32))]
 pub struct AlignBox {
     ptr: NonNull<u8>,
     len: usize,
@@ -22,11 +30,10 @@ unsafe impl Sync for AlignBox {}
 
 impl AlignBox {
     pub fn new(size: usize) -> Self {
-        let layout = Layout::from_size_align(size, 64).unwrap();
+        let layout = Layout::from_size_align(size, BUF_ALIGN).unwrap();
         unsafe {
             let raw_ptr = alloc::alloc(layout);
             let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
-            ptr::write_bytes(raw_ptr, 0, size);
             Self {
                 ptr,
                 len: size,
@@ -59,16 +66,67 @@ impl DerefMut for AlignBox {
 
 static BUF_POOL: OnceCell<ArrayQueue<AlignBox>> = OnceCell::const_new();
 
-pub fn init(limit: usize, payload_max: usize) -> Result<()> {
-    BUF_POOL.set(ArrayQueue::new(limit))?;
-    (0..limit).for_each({
-        let pool = BUF_POOL.get().unwrap();
-        |_| pool.push(AlignBox::new(payload_max)).unwrap()
-    });
-    POOL_SEM.add_permits(limit);
-    Ok(())
+pub struct BufPool;
+
+impl BufPool {
+    pub fn init(limit: usize, payload_max: usize) -> Result<()> {
+        BUF_POOL.set(ArrayQueue::new(limit))?;
+
+        (0..limit).for_each(|_| BufPool.push(AlignBox::new(payload_max)).unwrap());
+
+        POOL_SEM.add_permits(limit);
+        Ok(())
+    }
+
+    pub fn init_parallel(limit: usize, payload_max: usize) -> Result<()> {
+        match BUF_POOL.set(ArrayQueue::new(limit)) {
+            Ok(()) => {}
+            Err(e) => {
+                if !matches!(e, SetError::AlreadyInitializedError(_)) {
+                    Err(e)?;
+                }
+            }
+        };
+
+        let temp_tp = ThreadPoolBuilder::new()
+            .num_threads(thread::available_parallelism()?.get())
+            .thread_name(|i| format!("buf-init-{}", i))
+            .build()?;
+
+        let bufs = temp_tp.install(|| {
+            let bufs: Box<[_]> = (0..limit)
+                .into_par_iter()
+                .map(|_| AlignBox::new(payload_max))
+                .collect();
+            bufs
+        });
+        for buf in bufs {
+            BufPool.push(buf).unwrap();
+        }
+
+        POOL_SEM.add_permits(limit);
+        Ok(())
+    }
 }
 
-pub fn get() -> &'static ArrayQueue<AlignBox> {
-    BUF_POOL.get().unwrap()
+impl Deref for BufPool {
+    type Target = ArrayQueue<AlignBox>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        let b = BUF_POOL.get();
+        debug_assert!(b.is_some());
+        unsafe { b.unwrap_unchecked() }
+    }
+}
+
+pub struct Semaphore;
+
+impl Deref for Semaphore {
+    type Target = SP;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &POOL_SEM
+    }
 }

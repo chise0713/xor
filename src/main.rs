@@ -8,12 +8,12 @@ mod thread_pool;
 mod xor;
 
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     ops::Mul as _,
     process::ExitCode,
     sync::atomic::{AtomicUsize, Ordering},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -21,15 +21,19 @@ use log::{error, info, warn};
 use tokio::{
     runtime::Builder,
     signal,
-    sync::{Semaphore, SemaphorePermit, TryAcquireError, oneshot},
+    sync::{SemaphorePermit, TryAcquireError, oneshot},
     task::JoinSet,
     time,
 };
 
 use crate::{
     args::{Args, Parse as _, Usage as _},
-    buf_pool::AlignBox,
+    buf_pool::{AlignBox, BufPool, Semaphore},
+    local::{ConnectCtx, LastSeen, Started},
+    logger::Logger,
+    shutdown::Shutdown,
     socket::{Socket, Sockets},
+    thread_pool::ThreadPool,
     xor::xor,
 };
 
@@ -40,8 +44,6 @@ const LINK_PAYLOAD_OFFSET: usize = UDP_HEADER + IPV6_HEADER;
 
 const K: usize = 2usize.pow(10);
 const M: usize = K.pow(2);
-
-static POOL_SEM: Semaphore = Semaphore::const_new(0);
 
 fn main() -> Result<ExitCode> {
     let Args {
@@ -81,16 +83,13 @@ fn main() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     };
 
-    let limit = buffer_limit_usize.unwrap_or((K as f64).mul(1.5).round() as usize);
-
     let mtu = mtu_usize.unwrap_or(2usize.pow(14) + LINK_PAYLOAD_OFFSET);
     if mtu > LINK_MTU_MAX {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     }
     let payload_max = mtu - LINK_PAYLOAD_OFFSET;
-
-    buf_pool::init(limit, payload_max)?;
+    let limit = buffer_limit_usize.unwrap_or((K as f64).mul(1.5).round() as usize);
 
     let total_threads = thread::available_parallelism()?.get();
 
@@ -102,18 +101,20 @@ fn main() -> Result<ExitCode> {
             format!("tokio-runtime-{}", id)
         })
         .worker_threads(if token == 0 {
+            BufPool::init(limit, payload_max)?;
             total_threads
         } else {
             let worker_threads = total_threads.div_ceil(3).max(1);
             let compute_threads = total_threads.saturating_sub(worker_threads).max(1);
-            thread_pool::init(compute_threads)?;
+            ThreadPool::init(compute_threads)?;
+            BufPool::init_parallel(limit, payload_max)?;
             worker_threads
         })
         .build()?;
 
-    local::init_started_at();
+    Started::init()?;
     let sockets = Sockets::new(&listen_address, &remote_address)?;
-    logger::init();
+    Logger::init();
 
     rt.block_on(
         AsyncMain {
@@ -132,6 +133,7 @@ struct AsyncMain {
 }
 
 impl AsyncMain {
+    #[inline(always)]
     async fn enter(self) -> Result<ExitCode> {
         self.sockets.convert()?;
 
@@ -144,6 +146,7 @@ impl AsyncMain {
         tokio::select! {
             _ = signal::ctrl_c() => {
                 info!("shutting down");
+                join_set.shutdown().await;
                 return Ok(ExitCode::SUCCESS);
             }
             _ = watch_dog(self.time_out) => {
@@ -153,103 +156,94 @@ impl AsyncMain {
                 error!("a network recv task exited prematurely");
             },
         }
+        join_set.shutdown().await;
 
         Ok(ExitCode::FAILURE)
     }
 }
 
 async fn watch_dog(time_out: f64) {
-    let socket = Socket::Local.get();
-    let start = local::started_at();
+    let socket = Socket::Local;
+    let timeout_dur = Duration::from_secs_f64(time_out);
+    let sleep_dur = Duration::from_secs_f64(time_out);
+
     loop {
-        let timeout_dur = Duration::from_secs_f64(time_out);
-        time::sleep(Duration::from_secs_f64(time_out)).await;
-        if !local::is_connected() {
+        time::sleep(sleep_dur).await;
+        if !ConnectCtx::is_connected() {
             continue;
         }
 
-        let dur = start.elapsed().saturating_sub(local::last_seen());
-        if dur > timeout_dur {
-            if let Ok(addr) = socket.peer_addr() {
-                info!("client timeout {addr}");
-                if socket.connect("[::]:0").await.is_err()
-                    && socket.connect("0.0.0.0:0").await.is_err()
-                {
-                    error!("failed to disconnect {addr}");
-                    shutdown::set(true);
-                    return;
-                };
-            }
-            local::set_connected(false);
+        if LastSeen::elapsed() < timeout_dur {
+            continue;
+        }
+        ConnectCtx::disconnect();
+
+        if let Ok(addr) = socket.peer_addr() {
+            info!("client timeout {addr}");
+            if match addr.ip() {
+                IpAddr::V4(_) => socket.connect("0.0.0.0:0").await.is_err(),
+                IpAddr::V6(_) => socket.connect("[::]:0").await.is_err(),
+            } {
+                error!("failed to disconnect {addr}");
+                Shutdown::request();
+                return;
+            };
         }
     }
 }
 
-async fn send(
-    mut buf: AlignBox,
-    n: usize,
-    token: u8,
-    current_socket: Socket,
-    _permit: SemaphorePermit<'_>,
-) {
-    local::set_last_seen(Instant::now());
+async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: SemaphorePermit<'_>) {
+    LastSeen::now();
 
-    let buf_pool = buf_pool::get();
-    if token != 0 {
-        let (tx, rx) = oneshot::channel();
-        thread_pool::get().spawn_fifo(move || {
+    let (tx, rx) = oneshot::channel();
+
+    if token == 0 {
+        _ = tx.send(buf);
+    } else {
+        ThreadPool.spawn_fifo(move || {
             xor(tx, buf, n, token);
         });
-
-        let Ok(b) = rx.await else {
-            shutdown::set(true);
-            error!("sender dropped without sending");
-            return;
-        };
-        buf = b;
     };
 
-    let socket = current_socket.get();
+    let Ok(buf) = rx.await else {
+        Shutdown::request();
+        error!("sender dropped without sending");
+        return;
+    };
+
     if let Err(e) = socket.send(&buf[..n]).await {
-        if shutdown::cmp_exchange(false, true) {
+        if Shutdown::try_request() {
             error!("{e}");
         }
         return;
     };
 
-    if buf_pool.push(buf).is_err() {
-        shutdown::set(true);
+    if BufPool.push(buf).is_err() {
+        Shutdown::request();
         error!("failed to push buf back");
     }
 }
 
-async fn connect(current_socket: Socket, addr: SocketAddr) {
-    if local::cmp_exchange_connected(false, true) {
-        if current_socket.get().connect(addr).await.is_ok() {
+async fn connect(socket: Socket, addr: SocketAddr) {
+    if ConnectCtx::try_connect() {
+        if socket.connect(addr).await.is_ok() {
             info!("connected client {addr}");
         } else {
-            local::set_connected(false);
+            ConnectCtx::disconnect();
         }
     }
 }
 
-async fn recv(token: u8, current_socket: Socket) {
-    let buf_pool = buf_pool::get();
-    let socket = current_socket.get();
-
+async fn recv(token: u8, socket: Socket) {
     let try_push = |buf: AlignBox| {
-        if buf_pool.push(buf).is_err() {
-            shutdown::set(true);
+        if BufPool.push(buf).is_err() {
+            Shutdown::request();
             error!("failed to push buf back");
         }
     };
 
-    loop {
-        if shutdown::shutdown() {
-            return;
-        }
-
-        let Some(mut buf) = buf_pool.pop() else {
+    while !Shutdown::requested() {
+        let Some(mut buf) = BufPool.pop() else {
             let mut trashing = [0u8];
             let _ = socket.recv_from(&mut trashing).await;
             warn!("buf_pool is empty, dropping packet");
@@ -265,23 +259,23 @@ async fn recv(token: u8, current_socket: Socket) {
             }
         };
 
-        let _permit = match POOL_SEM.try_acquire() {
+        let _permit = match Semaphore.try_acquire() {
             Ok(p) => p,
             Err(e) => {
                 if matches!(e, TryAcquireError::NoPermits) {
-                    warn!("{current_socket} socket backpressure, dropping packet");
+                    warn!("{socket} socket backpressure, dropping packet");
                     try_push(buf);
                     continue;
                 }
                 error!("failed to aquire permit: {}", e);
-                shutdown::set(true);
+                Shutdown::request();
                 return;
             }
         };
 
-        if matches!(current_socket, Socket::Local) {
-            tokio::spawn(connect(current_socket, addr));
+        if matches!(socket, Socket::Local) {
+            tokio::spawn(connect(socket, addr));
         }
-        tokio::spawn(send(buf, n, token, !current_socket, _permit));
+        tokio::spawn(send(buf, n, token, !socket, _permit));
     }
 }

@@ -2,16 +2,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
-pub fn set(val: bool) {
-    SHUTDOWN.store(val, Ordering::Relaxed)
-}
+pub struct Shutdown;
 
-pub fn cmp_exchange(current: bool, new: bool) -> bool {
-    SHUTDOWN
-        .compare_exchange(current, new, Ordering::Release, Ordering::Acquire)
-        .is_ok()
-}
+impl Shutdown {
+    #[inline(always)]
+    pub fn request() {
+        SHUTDOWN.store(true, Ordering::Relaxed);
+    }
 
-pub fn shutdown() -> bool {
-    SHUTDOWN.load(Ordering::Relaxed)
+    #[inline(always)]
+    pub fn try_request() -> bool {
+        SHUTDOWN
+            .compare_exchange(false, true, Ordering::Release, Ordering::Acquire)
+            .is_ok()
+    }
+
+    #[inline(always)]
+    pub fn requested() -> bool {
+        SHUTDOWN.load(Ordering::Relaxed)
+    }
 }

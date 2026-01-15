@@ -1,8 +1,9 @@
 use log::error;
 use tokio::sync::oneshot::Sender;
 
-use crate::{buf_pool::AlignBox, shutdown};
+use crate::{buf_pool::AlignBox, shutdown::Shutdown};
 
+#[inline(always)]
 pub fn xor(tx: Sender<AlignBox>, mut buf: AlignBox, n: usize, token: u8) {
     #[inline(always)]
     fn token_to_u64(token: u8) -> u64 {
@@ -27,7 +28,7 @@ pub fn xor(tx: Sender<AlignBox>, mut buf: AlignBox, n: usize, token: u8) {
     suffix.iter_mut().for_each(|b| *b ^= token);
 
     if tx.send(buf).is_err() {
-        shutdown::set(true);
+        Shutdown::request();
         error!("receiver is dropped");
     };
 }

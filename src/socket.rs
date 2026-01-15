@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     net::{SocketAddr, UdpSocket as StdUdpSocket},
-    ops::Not,
+    ops::{Deref, Not},
 };
 
 use anyhow::Result;
@@ -22,11 +22,22 @@ pub enum Socket {
     Remote,
 }
 
-impl Socket {
-    pub fn get(&self) -> &UdpSocket {
+impl Deref for Socket {
+    type Target = UdpSocket;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
         match *self {
-            Socket::Local => LOCAL_SOCKET.get().unwrap(),
-            Socket::Remote => REMOTE_SOCKET.get().unwrap(),
+            Socket::Local => {
+                let l = LOCAL_SOCKET.get();
+                debug_assert!(l.is_some());
+                unsafe { l.unwrap_unchecked() }
+            }
+            Socket::Remote => {
+                let r = REMOTE_SOCKET.get();
+                debug_assert!(r.is_some());
+                unsafe { r.unwrap_unchecked() }
+            }
         }
     }
 }
@@ -34,6 +45,7 @@ impl Socket {
 impl Not for Socket {
     type Output = Self;
 
+    #[inline(always)]
     fn not(self) -> Self::Output {
         match self {
             Socket::Local => Socket::Remote,

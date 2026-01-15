@@ -3,41 +3,67 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tokio::sync::OnceCell;
+use tokio::sync::{OnceCell, SetError};
 
 static CONNECTED: AtomicBool = AtomicBool::new(false);
 static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
 static START: OnceCell<Instant> = OnceCell::const_new();
 
-pub fn is_connected() -> bool {
-    CONNECTED.load(Ordering::Relaxed)
+pub struct ConnectCtx;
+
+impl ConnectCtx {
+    #[inline(always)]
+    pub fn is_connected() -> bool {
+        CONNECTED.load(Ordering::Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn disconnect() {
+        CONNECTED.store(false, Ordering::Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn try_connect() -> bool {
+        CONNECTED
+            .compare_exchange(false, true, Ordering::Release, Ordering::Acquire)
+            .is_ok()
+    }
 }
 
-pub fn set_connected(val: bool) {
-    CONNECTED.store(val, Ordering::Relaxed)
+pub struct Started;
+
+impl Started {
+    #[inline(always)]
+    pub fn init() -> Result<(), SetError<Instant>> {
+        START.set(Instant::now())
+    }
+
+    #[inline(always)]
+    fn at() -> Instant {
+        let s = START.get();
+        debug_assert!(s.is_some());
+        unsafe { *s.unwrap_unchecked() }
+    }
 }
 
-pub fn cmp_exchange_connected(current: bool, new: bool) -> bool {
-    CONNECTED
-        .compare_exchange(current, new, Ordering::Release, Ordering::Acquire)
-        .is_ok()
-}
+pub struct LastSeen;
 
-pub fn init_started_at() {
-    START.set(Instant::now()).unwrap()
-}
+impl LastSeen {
+    #[inline(always)]
+    fn at() -> Duration {
+        Duration::from_millis(LAST_SEEN.load(Ordering::Relaxed))
+    }
 
-pub fn started_at() -> Instant {
-    *START.get().unwrap()
-}
+    #[inline(always)]
+    pub fn now() {
+        LAST_SEEN.store(
+            Instant::now().duration_since(Started::at()).as_millis() as u64,
+            Ordering::Relaxed,
+        )
+    }
 
-pub fn last_seen() -> Duration {
-    Duration::from_millis(LAST_SEEN.load(Ordering::Relaxed))
-}
-
-pub fn set_last_seen(val: Instant) {
-    LAST_SEEN.store(
-        val.duration_since(*START.get().unwrap()).as_millis() as u64,
-        Ordering::Relaxed,
-    )
+    #[inline(always)]
+    pub fn elapsed() -> Duration {
+        Started::at().elapsed().saturating_sub(LastSeen::at())
+    }
 }
