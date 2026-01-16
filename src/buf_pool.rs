@@ -2,7 +2,7 @@ use std::{
     alloc::{self, Layout},
     ops::{Deref, DerefMut},
     ptr::NonNull,
-    thread,
+    slice, thread,
 };
 
 use anyhow::Result;
@@ -18,35 +18,28 @@ static POOL_SEM: SP = SP::const_new(0);
 const BUF_ALIGN: usize = 64;
 
 #[derive(Debug)]
-#[repr(align(32))]
 pub struct AlignBox {
     ptr: NonNull<u8>,
     len: usize,
-    layout: Layout,
 }
 
 unsafe impl Send for AlignBox {}
 unsafe impl Sync for AlignBox {}
 
 impl AlignBox {
-    pub fn new(size: usize) -> Self {
-        let layout = Layout::from_size_align(size, BUF_ALIGN).unwrap();
-        unsafe {
-            let raw_ptr = alloc::alloc(layout);
-            let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
-            Self {
-                ptr,
-                len: size,
-                layout,
-            }
-        }
+    pub fn new(len: usize) -> Self {
+        let layout = Layout::from_size_align(len, BUF_ALIGN).unwrap();
+        let raw_ptr = unsafe { alloc::alloc_zeroed(layout) };
+        let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
+        Self { ptr, len }
     }
 }
 
 impl Drop for AlignBox {
     fn drop(&mut self) {
+        let layout = Layout::from_size_align(self.len, BUF_ALIGN).unwrap();
         unsafe {
-            alloc::dealloc(self.ptr.as_ptr(), self.layout);
+            alloc::dealloc(self.ptr.as_ptr(), layout);
         }
     }
 }
@@ -54,13 +47,13 @@ impl Drop for AlignBox {
 impl Deref for AlignBox {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
 
 impl DerefMut for AlignBox {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 }
 
@@ -93,18 +86,13 @@ impl BufPool {
             .thread_name(|i| format!("buf-init-{}", i))
             .build()?;
 
-        let bufs = temp_tp.install(|| {
-            let bufs: Box<[_]> = (0..limit)
+        temp_tp.install(|| {
+            (0..limit)
                 .into_par_iter()
-                .map(|_| AlignBox::new(payload_max))
-                .collect();
-            bufs
+                .for_each(|_| BufPool.push(AlignBox::new(payload_max)).unwrap())
         });
-        for buf in bufs {
-            BufPool.push(buf).unwrap();
-        }
 
-        POOL_SEM.add_permits(limit);
+        Semaphore.add_permits(limit);
         Ok(())
     }
 }
