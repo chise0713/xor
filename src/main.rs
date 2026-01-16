@@ -8,7 +8,7 @@ mod thread_pool;
 mod xor;
 
 use std::{
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     ops::Mul as _,
     process::ExitCode,
     sync::atomic::{AtomicUsize, Ordering},
@@ -22,14 +22,14 @@ use tokio::{
     runtime::Builder,
     signal,
     sync::{SemaphorePermit, TryAcquireError, oneshot},
-    task::JoinSet,
+    task::{self, JoinSet},
     time,
 };
 
 use crate::{
     args::{Args, Parse as _, Usage as _},
     buf_pool::{AlignBox, BufPool, Semaphore},
-    local::{ConnectCtx, LastSeen, Started},
+    local::{ConnectCtx, LastSeen, LocalAddr, Started},
     logger::Logger,
     shutdown::Shutdown,
     socket::{Socket, Sockets},
@@ -179,21 +179,14 @@ async fn watch_dog(time_out: f64) {
         ConnectCtx::disconnect();
 
         if let Ok(addr) = socket.peer_addr() {
+            LocalAddr::clear().await;
             info!("client timeout {addr}");
-            if match addr.ip() {
-                IpAddr::V4(_) => socket.connect("0.0.0.0:0").await.is_err(),
-                IpAddr::V6(_) => socket.connect("[::]:0").await.is_err(),
-            } {
-                error!("failed to disconnect {addr}");
-                Shutdown::request();
-                return;
-            };
         }
     }
 }
 
 async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: SemaphorePermit<'_>) {
-    LastSeen::now();
+    task::spawn_blocking(LastSeen::now);
 
     let (tx, rx) = oneshot::channel();
 
@@ -206,39 +199,43 @@ async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: Semap
     };
 
     let Ok(buf) = rx.await else {
-        Shutdown::request();
         error!("sender dropped without sending");
+        Shutdown::request();
         return;
     };
 
-    if let Err(e) = socket.send(&buf[..n]).await {
-        if Shutdown::try_request() {
-            error!("{e}");
-        }
-        return;
-    };
+    if matches!(socket, Socket::Local) {
+        if let Err(e) = socket.send_to(&buf[..n], LocalAddr::current().await).await
+            && Shutdown::try_request()
+        {
+            error!("{socket} socket: {e}");
+        };
+    } else {
+        if let Err(e) = socket.send(&buf[..n]).await
+            && Shutdown::try_request()
+        {
+            error!("{socket} socket: {e}");
+        };
+    }
 
     if BufPool.push(buf).is_err() {
-        Shutdown::request();
         error!("failed to push buf back");
+        Shutdown::request();
     }
 }
 
 async fn connect(socket: Socket, addr: SocketAddr) {
-    if ConnectCtx::try_connect() {
-        if socket.connect(addr).await.is_ok() {
-            info!("connected client {addr}");
-        } else {
-            ConnectCtx::disconnect();
-        }
+    if ConnectCtx::try_connect() && socket.connect(addr).await.is_ok() {
+        LocalAddr::set(addr).await;
+        info!("set client addr to {addr}");
     }
 }
 
 async fn recv(token: u8, socket: Socket) {
     let try_push = |buf: AlignBox| {
         if BufPool.push(buf).is_err() {
-            Shutdown::request();
             error!("failed to push buf back");
+            Shutdown::request();
         }
     };
 

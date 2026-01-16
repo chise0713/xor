@@ -1,25 +1,45 @@
 use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
-use tokio::sync::{OnceCell, SetError};
+use tokio::sync::{Mutex, OnceCell, SetError};
 
 static CONNECTED: AtomicBool = AtomicBool::new(false);
+static LOCAL_ADDR: Mutex<SocketAddr> =
+    Mutex::const_new(SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0));
+
 static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
 static START: OnceCell<Instant> = OnceCell::const_new();
+
+pub struct LocalAddr;
+
+impl LocalAddr {
+    pub async fn current() -> SocketAddr {
+        *LOCAL_ADDR.lock().await
+    }
+
+    pub async fn set(addr: SocketAddr) {
+        *LOCAL_ADDR.lock().await = addr
+    }
+
+    pub async fn clear() {
+        *LOCAL_ADDR.lock().await = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0)
+    }
+}
 
 pub struct ConnectCtx;
 
 impl ConnectCtx {
     #[inline(always)]
     pub fn is_connected() -> bool {
-        CONNECTED.load(Ordering::Relaxed)
+        CONNECTED.load(Ordering::Acquire)
     }
 
     #[inline(always)]
     pub fn disconnect() {
-        CONNECTED.store(false, Ordering::Relaxed)
+        CONNECTED.store(false, Ordering::Release)
     }
 
     #[inline(always)]
