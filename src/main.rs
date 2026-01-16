@@ -142,12 +142,12 @@ impl AsyncMain {
 
         info!("service started");
 
-        let mut ret = Ok(ExitCode::FAILURE);
+        let mut exit_code = ExitCode::FAILURE;
 
         tokio::select! {
             _ = signal::ctrl_c() => {
                 info!("shutting down");
-                ret = Ok(ExitCode::SUCCESS);
+                exit_code = ExitCode::SUCCESS;
             }
             _ = watch_dog(self.time_out) => {
                 error!("the watch dog exited prematurely");
@@ -158,7 +158,7 @@ impl AsyncMain {
         }
         join_set.shutdown().await;
 
-        ret
+        Ok(exit_code)
     }
 }
 

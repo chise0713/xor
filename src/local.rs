@@ -50,11 +50,6 @@ pub struct LastSeen;
 
 impl LastSeen {
     #[inline(always)]
-    fn at() -> Duration {
-        Duration::from_millis(LAST_SEEN.load(Ordering::Relaxed))
-    }
-
-    #[inline(always)]
     pub fn now() {
         LAST_SEEN.store(
             Instant::now().duration_since(Started::at()).as_millis() as u64,
@@ -64,6 +59,8 @@ impl LastSeen {
 
     #[inline(always)]
     pub fn elapsed() -> Duration {
-        Started::at().elapsed().saturating_sub(LastSeen::at())
+        Started::at()
+            .elapsed()
+            .saturating_sub(Duration::from_millis(LAST_SEEN.load(Ordering::Relaxed)))
     }
 }

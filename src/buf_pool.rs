@@ -11,7 +11,7 @@ use rayon::{
     ThreadPoolBuilder,
     iter::{IntoParallelIterator as _, ParallelIterator as _},
 };
-use tokio::sync::{OnceCell, Semaphore as SP, SetError};
+use tokio::sync::{OnceCell, Semaphore as SP};
 
 static POOL_SEM: SP = SP::const_new(0);
 
@@ -99,14 +99,7 @@ pub struct BufPool;
 
 impl BufPool {
     pub fn init(limit: usize, payload_max: usize) -> Result<()> {
-        match BUF_POOL.set(ArrayQueue::new(limit)) {
-            Ok(()) => {}
-            Err(e) => {
-                if !matches!(e, SetError::AlreadyInitializedError(_)) {
-                    Err(e)?;
-                }
-            }
-        };
+        BUF_POOL.set(ArrayQueue::new(limit))?;
 
         let temp_tp = ThreadPoolBuilder::new()
             .num_threads(thread::available_parallelism()?.get())
