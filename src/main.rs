@@ -8,8 +8,6 @@ mod thread_pool;
 mod xor;
 
 use std::{
-    net::SocketAddr,
-    ops::Mul as _,
     process::ExitCode,
     sync::atomic::{AtomicUsize, Ordering},
     thread,
@@ -22,7 +20,7 @@ use tokio::{
     runtime::Builder,
     signal,
     sync::{SemaphorePermit, TryAcquireError, oneshot},
-    task::{self, JoinSet},
+    task::JoinSet,
     time,
 };
 
@@ -33,7 +31,7 @@ use crate::{
     logger::Logger,
     shutdown::Shutdown,
     socket::{Socket, Sockets},
-    thread_pool::ThreadPool,
+    thread_pool::{SeenThread, ThreadPool},
     xor::xor,
 };
 
@@ -83,14 +81,14 @@ fn main() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     };
 
-    let mtu = mtu_usize.unwrap_or(2usize.pow(14) + LINK_PAYLOAD_OFFSET);
+    let mtu = mtu_usize.unwrap_or(16384 + LINK_PAYLOAD_OFFSET);
     if mtu > LINK_MTU_MAX {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     }
 
     let payload_max = mtu - LINK_PAYLOAD_OFFSET;
-    let limit = buffer_limit_usize.unwrap_or((K as f64).mul(1.5).round() as usize);
+    let limit = buffer_limit_usize.unwrap_or(2 * K);
 
     let total_threads = thread::available_parallelism()?.get();
     let rt = Builder::new_multi_thread()
@@ -110,10 +108,11 @@ fn main() -> Result<ExitCode> {
         })
         .build()?;
 
-    BufPool::init(limit, payload_max)?;
-    Started::init()?;
     let sockets = Sockets::new(&listen_address, &remote_address)?;
+    BufPool::init(limit, payload_max)?;
+    SeenThread::init()?;
     Logger::init();
+    Started::init()?;
 
     rt.block_on(
         AsyncMain {
@@ -148,7 +147,7 @@ impl AsyncMain {
             _ = signal::ctrl_c() => {
                 info!("shutting down");
                 exit_code = ExitCode::SUCCESS;
-            }
+            },
             _ = watch_dog(self.time_out) => {
                 error!("the watch dog exited prematurely");
             },
@@ -176,17 +175,23 @@ async fn watch_dog(time_out: f64) {
         if LastSeen::elapsed() < timeout_dur {
             continue;
         }
-        ConnectCtx::disconnect();
 
         if let Ok(addr) = socket.peer_addr() {
-            LocalAddr::clear().await;
+            ConnectCtx::disconnect().await;
             info!("client timeout {addr}");
         }
     }
 }
 
+fn try_push(buf: AlignBox) {
+    if BufPool.push(buf).is_err() {
+        error!("failed to push buf back");
+        Shutdown::request();
+    }
+}
+
 async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: SemaphorePermit<'_>) {
-    task::spawn_blocking(LastSeen::now);
+    SeenThread.spawn_fifo(LastSeen::now);
 
     let (tx, rx) = oneshot::channel();
 
@@ -204,19 +209,18 @@ async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: Semap
         return;
     };
 
-    if matches!(socket, Socket::Local) {
-        if let Err(e) = socket.send_to(&buf[..n], LocalAddr::current().await).await
-            && Shutdown::try_request()
-        {
-            error!("{socket} socket: {e}");
-        };
+    let send_result = if matches!(socket, Socket::Local) {
+        let addr = LocalAddr::current().await;
+        socket.send_to(&buf[..n], addr).await
     } else {
-        if let Err(e) = socket.send(&buf[..n]).await
-            && Shutdown::try_request()
-        {
-            error!("{socket} socket: {e}");
-        };
-    }
+        socket.send(&buf[..n]).await
+    };
+    if let Err(e) = send_result
+        && Shutdown::try_request()
+    {
+        error!("{socket} socket: {e}");
+        return;
+    };
 
     if BufPool.push(buf).is_err() {
         error!("failed to push buf back");
@@ -224,21 +228,7 @@ async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: Semap
     }
 }
 
-async fn connect(socket: Socket, addr: SocketAddr) {
-    if ConnectCtx::try_connect() && socket.connect(addr).await.is_ok() {
-        LocalAddr::set(addr).await;
-        info!("set client addr to {addr}");
-    }
-}
-
 async fn recv(token: u8, socket: Socket) {
-    let try_push = |buf: AlignBox| {
-        if BufPool.push(buf).is_err() {
-            error!("failed to push buf back");
-            Shutdown::request();
-        }
-    };
-
     while !Shutdown::requested() {
         let Some(mut buf) = BufPool.pop() else {
             let mut trashing = [0u8];
@@ -271,7 +261,7 @@ async fn recv(token: u8, socket: Socket) {
         };
 
         if matches!(socket, Socket::Local) {
-            tokio::spawn(connect(socket, addr));
+            tokio::spawn(ConnectCtx::connect(socket, addr));
         }
         tokio::spawn(send(buf, n, token, !socket, _permit));
     }

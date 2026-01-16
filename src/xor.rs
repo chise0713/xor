@@ -7,6 +7,8 @@ use crate::{
     shutdown::Shutdown,
 };
 
+const EXBAND: usize = if cfg!(target_arch = "aarch64") { 8 } else { 4 };
+
 #[inline(always)]
 pub fn xor(tx: Sender<AlignBox>, mut buf: AlignBox, n: usize, token: u8) {
     let ptr = buf.as_ptr() as usize;
@@ -22,11 +24,20 @@ pub fn xor(tx: Sender<AlignBox>, mut buf: AlignBox, n: usize, token: u8) {
     let simd = u64x8::splat(u64::from_ne_bytes([token; 8]));
 
     prefix.iter_mut().for_each(|b| *b ^= token);
-    middle.iter_mut().for_each(|chunk| *chunk ^= simd);
     suffix.iter_mut().for_each(|b| *b ^= token);
 
-    if tx.send(buf).is_err() {
-        Shutdown::request();
+    let exband = if middle.len() < EXBAND { 1 } else { EXBAND };
+    let mut chunks = middle.chunks_exact_mut(exband);
+
+    chunks
+        .by_ref()
+        .for_each(|chunk| (0..exband).for_each(|i| chunk[i] ^= simd));
+    chunks
+        .into_remainder()
+        .iter_mut()
+        .for_each(|rem| *rem ^= simd);
+
+    if tx.send(buf).is_err() && Shutdown::try_request() {
         error!("receiver is dropped");
     };
 }

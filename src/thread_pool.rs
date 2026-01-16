@@ -33,3 +33,31 @@ impl Deref for ThreadPool {
         unsafe { t.unwrap_unchecked() }
     }
 }
+
+static SEEN_THREAD: OnceCell<TP> = OnceCell::const_new();
+
+pub struct SeenThread;
+
+impl SeenThread {
+    pub fn init() -> Result<()> {
+        SEEN_THREAD.set(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(1)
+                .stack_size(32 * K)
+                .thread_name(|_| "last-seen".to_string())
+                .build()?,
+        )?;
+        Ok(())
+    }
+}
+
+impl Deref for SeenThread {
+    type Target = TP;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        let t = SEEN_THREAD.get();
+        debug_assert!(t.is_some());
+        unsafe { t.unwrap_unchecked() }
+    }
+}

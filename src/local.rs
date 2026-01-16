@@ -4,7 +4,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use log::info;
 use tokio::sync::{Mutex, OnceCell, SetError};
+
+use crate::socket::Socket;
 
 static CONNECTED: AtomicBool = AtomicBool::new(false);
 static LOCAL_ADDR: Mutex<SocketAddr> =
@@ -16,15 +19,18 @@ static START: OnceCell<Instant> = OnceCell::const_new();
 pub struct LocalAddr;
 
 impl LocalAddr {
+    #[inline(always)]
     pub async fn current() -> SocketAddr {
         *LOCAL_ADDR.lock().await
     }
 
-    pub async fn set(addr: SocketAddr) {
+    #[inline(always)]
+    async fn set(addr: SocketAddr) {
         *LOCAL_ADDR.lock().await = addr
     }
 
-    pub async fn clear() {
+    #[inline(always)]
+    async fn clear() {
         *LOCAL_ADDR.lock().await = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0)
     }
 }
@@ -33,13 +39,22 @@ pub struct ConnectCtx;
 
 impl ConnectCtx {
     #[inline(always)]
+    pub async fn connect(socket: Socket, addr: SocketAddr) {
+        if ConnectCtx::try_connect() && socket.connect(addr).await.is_ok() {
+            LocalAddr::set(addr).await;
+            info!("set client addr to {addr}");
+        }
+    }
+
+    #[inline(always)]
     pub fn is_connected() -> bool {
         CONNECTED.load(Ordering::Acquire)
     }
 
     #[inline(always)]
-    pub fn disconnect() {
-        CONNECTED.store(false, Ordering::Release)
+    pub async fn disconnect() {
+        CONNECTED.store(false, Ordering::Release);
+        LocalAddr::clear().await;
     }
 
     #[inline(always)]
