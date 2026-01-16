@@ -1,6 +1,6 @@
 [package]
 name = "xor"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 
 [features]
@@ -25,6 +25,7 @@ tokio = { version = "^1.49", default-features = false, features = [
     "sync",
     "time",
 ] }
+wide = "^1.1"
 
 [profile.release]
 opt-level = 3

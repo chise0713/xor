@@ -15,7 +15,43 @@ use tokio::sync::{OnceCell, Semaphore as SP, SetError};
 
 static POOL_SEM: SP = SP::const_new(0);
 
-const BUF_ALIGN: usize = 64;
+// https://rust-lang.github.io/hashbrown/src/crossbeam_utils/cache_padded.rs.html#128-130
+pub const CACHELINE_ALIGN: usize = {
+    #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+    ))]
+    {
+        128
+    }
+    #[cfg(any(
+        target_arch = "arm",
+        target_arch = "mips",
+        target_arch = "mips64",
+        target_arch = "riscv64",
+    ))]
+    {
+        32
+    }
+    #[cfg(target_arch = "s390x")]
+    {
+        256
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+        target_arch = "arm",
+        target_arch = "mips",
+        target_arch = "mips64",
+        target_arch = "riscv64",
+        target_arch = "s390x",
+    )))]
+    {
+        64
+    }
+};
 
 #[derive(Debug)]
 pub struct AlignBox {
@@ -28,7 +64,7 @@ unsafe impl Sync for AlignBox {}
 
 impl AlignBox {
     pub fn new(len: usize) -> Self {
-        let layout = Layout::from_size_align(len, BUF_ALIGN).unwrap();
+        let layout = Layout::from_size_align(len, CACHELINE_ALIGN).unwrap();
         let raw_ptr = unsafe { alloc::alloc_zeroed(layout) };
         let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
         Self { ptr, len }
@@ -37,7 +73,7 @@ impl AlignBox {
 
 impl Drop for AlignBox {
     fn drop(&mut self) {
-        let layout = Layout::from_size_align(self.len, BUF_ALIGN).unwrap();
+        let layout = Layout::from_size_align(self.len, CACHELINE_ALIGN).unwrap();
         unsafe {
             alloc::dealloc(self.ptr.as_ptr(), layout);
         }
@@ -63,15 +99,6 @@ pub struct BufPool;
 
 impl BufPool {
     pub fn init(limit: usize, payload_max: usize) -> Result<()> {
-        BUF_POOL.set(ArrayQueue::new(limit))?;
-
-        (0..limit).for_each(|_| BufPool.push(AlignBox::new(payload_max)).unwrap());
-
-        POOL_SEM.add_permits(limit);
-        Ok(())
-    }
-
-    pub fn init_parallel(limit: usize, payload_max: usize) -> Result<()> {
         match BUF_POOL.set(ArrayQueue::new(limit)) {
             Ok(()) => {}
             Err(e) => {

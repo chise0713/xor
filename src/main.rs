@@ -88,11 +88,11 @@ fn main() -> Result<ExitCode> {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     }
+
     let payload_max = mtu - LINK_PAYLOAD_OFFSET;
     let limit = buffer_limit_usize.unwrap_or((K as f64).mul(1.5).round() as usize);
 
     let total_threads = thread::available_parallelism()?.get();
-
     let rt = Builder::new_multi_thread()
         .enable_all()
         .thread_name_fn(|| {
@@ -101,17 +101,16 @@ fn main() -> Result<ExitCode> {
             format!("tokio-runtime-{}", id)
         })
         .worker_threads(if token == 0 {
-            BufPool::init(limit, payload_max)?;
             total_threads
         } else {
             let worker_threads = total_threads.div_ceil(3).max(1);
             let compute_threads = total_threads.saturating_sub(worker_threads).max(1);
             ThreadPool::init(compute_threads)?;
-            BufPool::init_parallel(limit, payload_max)?;
             worker_threads
         })
         .build()?;
 
+    BufPool::init(limit, payload_max)?;
     Started::init()?;
     let sockets = Sockets::new(&listen_address, &remote_address)?;
     Logger::init();
@@ -143,11 +142,12 @@ impl AsyncMain {
 
         info!("service started");
 
+        let mut ret = Ok(ExitCode::FAILURE);
+
         tokio::select! {
             _ = signal::ctrl_c() => {
                 info!("shutting down");
-                join_set.shutdown().await;
-                return Ok(ExitCode::SUCCESS);
+                ret = Ok(ExitCode::SUCCESS);
             }
             _ = watch_dog(self.time_out) => {
                 error!("the watch dog exited prematurely");
@@ -158,7 +158,7 @@ impl AsyncMain {
         }
         join_set.shutdown().await;
 
-        Ok(ExitCode::FAILURE)
+        ret
     }
 }
 
