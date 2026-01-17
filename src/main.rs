@@ -16,10 +16,11 @@ use std::{
 
 use anyhow::Result;
 use log::{error, info, warn};
+use log_limit::warn_limit_global;
 use tokio::{
     runtime::Builder,
     signal,
-    sync::{SemaphorePermit, oneshot},
+    sync::{SemaphorePermit, TryAcquireError, oneshot},
     task::JoinSet,
     time,
 };
@@ -31,7 +32,7 @@ use crate::{
     logger::Logger,
     shutdown::Shutdown,
     socket::{Socket, Sockets},
-    thread_pool::{SeenThread, ThreadPool},
+    thread_pool::{SeenThread, ThreadPool, XorThreads},
     xor::xor,
 };
 
@@ -110,7 +111,6 @@ fn main() -> Result<ExitCode> {
 
     let sockets = Sockets::new(&listen_address, &remote_address)?;
     BufPool::init(limit, payload_max)?;
-    SeenThread::build()?;
     Logger::init();
     Started::now()?;
 
@@ -146,6 +146,7 @@ impl AsyncMain {
         tokio::select! {
             _ = signal::ctrl_c() => {
                 info!("shutting down");
+                Shutdown::request();
                 exit_code = ExitCode::SUCCESS;
             },
             _ = watch_dog(self.time_out) => {
@@ -188,13 +189,13 @@ fn try_push(buf: AlignBox) {
     }
 }
 
-async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: SemaphorePermit<'_>) {
+async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _p: SemaphorePermit<'_>) {
     let (tx, rx) = oneshot::channel();
 
     if token == 0 {
         _ = tx.send(buf);
     } else {
-        ThreadPool.spawn_fifo(move || {
+        XorThreads.spawn_fifo(move || {
             xor(tx, buf, n, token);
         });
     };
@@ -223,14 +224,27 @@ async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: Semap
 
 async fn recv(token: u8, socket: Socket) {
     while !Shutdown::requested() {
-        let _permit = Semaphore.acquire().await;
-        debug_assert!(_permit.is_ok());
-        let _permit = unsafe { _permit.unwrap_unchecked() };
+        let _p = match Semaphore.try_acquire() {
+            Ok(_p) => _p,
+            Err(TryAcquireError::Closed) => {
+                break;
+            }
+            Err(TryAcquireError::NoPermits) => {
+                warn_limit_global!(1, Duration::from_millis(250), "semaphore backpressure");
+                let _p = Semaphore.acquire().await;
+                debug_assert!(_p.is_ok());
+                unsafe { _p.unwrap_unchecked() }
+            }
+        };
 
         let Some(mut buf) = BufPool.pop() else {
             let mut trashing = [0u8];
             let _ = socket.recv_from(&mut trashing).await;
-            warn!("buf_pool is empty, dropping packet");
+            warn_limit_global!(
+                1,
+                Duration::from_millis(250),
+                "buf_pool is empty, dropping packet"
+            );
             continue;
         };
 
@@ -259,6 +273,6 @@ async fn recv(token: u8, socket: Socket) {
                 tokio::spawn(ConnectCtx::connect(addr));
             }
         }
-        tokio::spawn(send(buf, n, token, !socket, _permit));
+        tokio::spawn(send(buf, n, token, !socket, _p));
     }
 }

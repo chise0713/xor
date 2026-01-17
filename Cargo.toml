@@ -1,6 +1,6 @@
 [package]
 name = "xor"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2024"
 
 [features]
@@ -13,6 +13,7 @@ env_logger = { version = "^0.11", default-features = false, features = [
     "humantime",
 ] }
 log = "^0.4"
+log_limit = { version = "^0.2", default-features = false }
 rayon = "^1.11"
 socket2 = "^0.6"
 supershorty = "^0.2.4"

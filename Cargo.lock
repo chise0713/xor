@@ -191,6 +191,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
+name = "log_limit"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0351abfdf37426aa2d7471d6abc45bfaaa15b596ab17fcfcf3afd90de786b861"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "mio"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -485,12 +494,13 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "xor"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "anyhow",
  "crossbeam-queue",
  "env_logger",
  "log",
+ "log_limit",
  "rayon",
  "socket2",
  "supershorty",

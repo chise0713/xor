@@ -41,7 +41,7 @@ impl ConnectCtx {
     pub async fn connect(addr: SocketAddr) {
         if ConnectCtx::try_connect() {
             LocalAddr::set(addr).await;
-            info!("set client addr to {addr}");
+            info!("connected client {addr}");
         }
     }
 
