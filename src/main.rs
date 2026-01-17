@@ -19,7 +19,7 @@ use log::{error, info, warn};
 use tokio::{
     runtime::Builder,
     signal,
-    sync::{SemaphorePermit, TryAcquireError, oneshot},
+    sync::{SemaphorePermit, oneshot},
     task::JoinSet,
     time,
 };
@@ -88,7 +88,7 @@ fn main() -> Result<ExitCode> {
     }
 
     let payload_max = mtu - LINK_PAYLOAD_OFFSET;
-    let limit = buffer_limit_usize.unwrap_or(2 * K);
+    let limit = buffer_limit_usize.unwrap_or(K);
 
     let total_threads = thread::available_parallelism()?.get();
     let rt = Builder::new_multi_thread()
@@ -103,16 +103,16 @@ fn main() -> Result<ExitCode> {
         } else {
             let worker_threads = total_threads.div_ceil(3).max(1);
             let compute_threads = total_threads.saturating_sub(worker_threads).max(1);
-            ThreadPool::init(compute_threads)?;
+            ThreadPool::build(compute_threads)?;
             worker_threads
         })
         .build()?;
 
     let sockets = Sockets::new(&listen_address, &remote_address)?;
     BufPool::init(limit, payload_max)?;
-    SeenThread::init()?;
+    SeenThread::build()?;
     Logger::init();
-    Started::init()?;
+    Started::now()?;
 
     rt.block_on(
         AsyncMain {
@@ -162,7 +162,6 @@ impl AsyncMain {
 }
 
 async fn watch_dog(time_out: f64) {
-    let socket = Socket::Local;
     let timeout_dur = Duration::from_secs_f64(time_out);
     let sleep_dur = Duration::from_secs_f64(time_out);
 
@@ -176,10 +175,9 @@ async fn watch_dog(time_out: f64) {
             continue;
         }
 
-        if let Ok(addr) = socket.peer_addr() {
-            ConnectCtx::disconnect().await;
-            info!("client timeout {addr}");
-        }
+        let addr = LocalAddr::current().await;
+        ConnectCtx::disconnect().await;
+        info!("client timeout {addr}");
     }
 }
 
@@ -191,8 +189,6 @@ fn try_push(buf: AlignBox) {
 }
 
 async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: SemaphorePermit<'_>) {
-    SeenThread.spawn_fifo(LastSeen::now);
-
     let (tx, rx) = oneshot::channel();
 
     if token == 0 {
@@ -222,14 +218,15 @@ async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _permit: Semap
         return;
     };
 
-    if BufPool.push(buf).is_err() {
-        error!("failed to push buf back");
-        Shutdown::request();
-    }
+    try_push(buf);
 }
 
 async fn recv(token: u8, socket: Socket) {
     while !Shutdown::requested() {
+        let _permit = Semaphore.acquire().await;
+        debug_assert!(_permit.is_ok());
+        let _permit = unsafe { _permit.unwrap_unchecked() };
+
         let Some(mut buf) = BufPool.pop() else {
             let mut trashing = [0u8];
             let _ = socket.recv_from(&mut trashing).await;
@@ -246,22 +243,21 @@ async fn recv(token: u8, socket: Socket) {
             }
         };
 
-        let _permit = match Semaphore.try_acquire() {
-            Ok(p) => p,
-            Err(e) => {
-                if matches!(e, TryAcquireError::NoPermits) {
-                    warn!("{socket} socket backpressure, dropping packet");
-                    try_push(buf);
-                    continue;
-                }
-                error!("failed to aquire permit: {}", e);
-                Shutdown::request();
-                return;
-            }
+        if ConnectCtx::is_connected() {
+            SeenThread.spawn(LastSeen::now)
         };
 
         if matches!(socket, Socket::Local) {
-            tokio::spawn(ConnectCtx::connect(socket, addr));
+            if ConnectCtx::is_connected() {
+                let local_addr = LocalAddr::current().await;
+                if addr != local_addr {
+                    try_push(buf);
+                    warn!("incoming: {addr}, recorded: {local_addr}, dropping");
+                    continue;
+                }
+            } else {
+                tokio::spawn(ConnectCtx::connect(addr));
+            }
         }
         tokio::spawn(send(buf, n, token, !socket, _permit));
     }

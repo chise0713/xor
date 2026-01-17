@@ -82,12 +82,14 @@ impl Drop for AlignBox {
 
 impl Deref for AlignBox {
     type Target = [u8];
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
 
 impl DerefMut for AlignBox {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }

@@ -1,21 +1,22 @@
 use std::ops::Deref;
 
 use anyhow::Result;
-use rayon::ThreadPool as TP;
+use rayon::{ThreadPool as TP, ThreadPoolBuilder};
 use tokio::sync::OnceCell;
 
 use crate::K;
 
+const STACK_SIZE: usize = 128 * K;
 static THREAD_POOL: OnceCell<TP> = OnceCell::const_new();
 
 pub struct ThreadPool;
 
 impl ThreadPool {
-    pub fn init(compute_threads: usize) -> Result<()> {
+    pub fn build(compute_threads: usize) -> Result<()> {
         THREAD_POOL.set(
-            rayon::ThreadPoolBuilder::new()
+            ThreadPoolBuilder::new()
                 .num_threads(compute_threads)
-                .stack_size(32 * K)
+                .stack_size(STACK_SIZE)
                 .thread_name(|i| format!("xor-worker-{}", i))
                 .build()?,
         )?;
@@ -39,12 +40,12 @@ static SEEN_THREAD: OnceCell<TP> = OnceCell::const_new();
 pub struct SeenThread;
 
 impl SeenThread {
-    pub fn init() -> Result<()> {
+    pub fn build() -> Result<()> {
         SEEN_THREAD.set(
-            rayon::ThreadPoolBuilder::new()
+            ThreadPoolBuilder::new()
                 .num_threads(1)
-                .stack_size(32 * K)
-                .thread_name(|_| "last-seen".to_string())
+                .stack_size(STACK_SIZE)
+                .thread_name(|_| "last-seen-worker".to_string())
                 .build()?,
         )?;
         Ok(())

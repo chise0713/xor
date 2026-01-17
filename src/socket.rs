@@ -82,9 +82,6 @@ impl Sockets {
         let local = socket2::Socket::new(local_domain, Type::DGRAM, Some(Protocol::UDP))?;
         let remote = socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
 
-        local.set_reuse_address(true)?;
-        remote.set_reuse_address(true)?;
-
         if matches!(local_domain, Domain::IPV6) {
             local.set_only_v6(false)?;
         }

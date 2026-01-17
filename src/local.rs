@@ -7,11 +7,10 @@ use std::{
 use log::info;
 use tokio::sync::{Mutex, OnceCell, SetError};
 
-use crate::socket::Socket;
+const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
 static CONNECTED: AtomicBool = AtomicBool::new(false);
-static LOCAL_ADDR: Mutex<SocketAddr> =
-    Mutex::const_new(SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0));
+static LOCAL_ADDR: Mutex<SocketAddr> = Mutex::const_new(NULL_SOCKET_ADDR);
 
 static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
 static START: OnceCell<Instant> = OnceCell::const_new();
@@ -31,7 +30,7 @@ impl LocalAddr {
 
     #[inline(always)]
     async fn clear() {
-        *LOCAL_ADDR.lock().await = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0)
+        *LOCAL_ADDR.lock().await = NULL_SOCKET_ADDR
     }
 }
 
@@ -39,8 +38,8 @@ pub struct ConnectCtx;
 
 impl ConnectCtx {
     #[inline(always)]
-    pub async fn connect(socket: Socket, addr: SocketAddr) {
-        if ConnectCtx::try_connect() && socket.connect(addr).await.is_ok() {
+    pub async fn connect(addr: SocketAddr) {
+        if ConnectCtx::try_connect() {
             LocalAddr::set(addr).await;
             info!("set client addr to {addr}");
         }
@@ -69,7 +68,7 @@ pub struct Started;
 
 impl Started {
     #[inline(always)]
-    pub fn init() -> Result<(), SetError<Instant>> {
+    pub fn now() -> Result<(), SetError<Instant>> {
         START.set(Instant::now())
     }
 
