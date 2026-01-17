@@ -10,8 +10,8 @@ use tokio::{net::UdpSocket, sync::OnceCell};
 
 use crate::M;
 
-const RECV_BUF_SIZE: usize = 4 * M;
-const SEND_BUF_SIZE: usize = M;
+const RECV_BUF_SIZE: usize = 32 * M;
+const SEND_BUF_SIZE: usize = RECV_BUF_SIZE;
 
 static LOCAL_SOCKET: OnceCell<UdpSocket> = OnceCell::const_new();
 static REMOTE_SOCKET: OnceCell<UdpSocket> = OnceCell::const_new();

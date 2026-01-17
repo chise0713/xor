@@ -15,7 +15,7 @@ use std::{
 };
 
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{error, info};
 use log_limit::warn_limit_global;
 use tokio::{
     runtime::Builder,
@@ -32,7 +32,7 @@ use crate::{
     logger::Logger,
     shutdown::Shutdown,
     socket::{Socket, Sockets},
-    thread_pool::{SeenThread, ThreadPool, XorThreads},
+    thread_pool::ThreadPool,
     xor::xor,
 };
 
@@ -68,7 +68,7 @@ fn main() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     };
 
-    let time_out = time_out_f64_secs.unwrap_or(2.);
+    let time_out = time_out_f64_secs.unwrap_or(5.);
     if time_out == 0. {
         Args::usage();
         return Ok(ExitCode::FAILURE);
@@ -102,7 +102,7 @@ fn main() -> Result<ExitCode> {
         .worker_threads(if token == 0 {
             total_threads
         } else {
-            let worker_threads = total_threads.div_ceil(3).max(1);
+            let worker_threads = total_threads.div_ceil(2).max(1);
             let compute_threads = total_threads.saturating_sub(worker_threads).max(1);
             ThreadPool::build(compute_threads)?;
             worker_threads
@@ -176,7 +176,7 @@ async fn watch_dog(time_out: f64) {
             continue;
         }
 
-        let addr = LocalAddr::current().await;
+        let addr = LocalAddr::current();
         ConnectCtx::disconnect().await;
         info!("client timeout {addr}");
     }
@@ -189,25 +189,34 @@ fn try_push(buf: AlignBox) {
     }
 }
 
-async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _p: SemaphorePermit<'_>) {
-    let (tx, rx) = oneshot::channel();
-
-    if token == 0 {
-        _ = tx.send(buf);
+async fn send(
+    buf: AlignBox,
+    n: usize,
+    token: u8,
+    socket: Socket,
+    is_local: bool,
+    _p: SemaphorePermit<'_>,
+) {
+    let buf = if token == 0 {
+        buf
     } else {
-        XorThreads.spawn_fifo(move || {
+        let (tx, rx) = oneshot::channel();
+
+        ThreadPool.spawn_fifo(move || {
             xor(tx, buf, n, token);
         });
+
+        let Ok(buf) = rx.await else {
+            error!("sender dropped without sending");
+            Shutdown::request();
+            return;
+        };
+
+        buf
     };
 
-    let Ok(buf) = rx.await else {
-        error!("sender dropped without sending");
-        Shutdown::request();
-        return;
-    };
-
-    let send_result = if matches!(socket, Socket::Local) {
-        let addr = LocalAddr::current().await;
+    let send_result = if is_local {
+        let addr = LocalAddr::current();
         socket.send_to(&buf[..n], addr).await
     } else {
         socket.send(&buf[..n]).await
@@ -223,6 +232,7 @@ async fn send(buf: AlignBox, n: usize, token: u8, socket: Socket, _p: SemaphoreP
 }
 
 async fn recv(token: u8, socket: Socket) {
+    let is_local = matches!(socket, Socket::Local);
     while !Shutdown::requested() {
         let _p = match Semaphore.try_acquire() {
             Ok(_p) => _p,
@@ -257,22 +267,20 @@ async fn recv(token: u8, socket: Socket) {
             }
         };
 
-        if ConnectCtx::is_connected() {
-            SeenThread.spawn(LastSeen::now)
-        };
-
-        if matches!(socket, Socket::Local) {
-            if ConnectCtx::is_connected() {
-                let local_addr = LocalAddr::current().await;
-                if addr != local_addr {
-                    try_push(buf);
-                    warn!("incoming: {addr}, recorded: {local_addr}, dropping");
-                    continue;
+        if is_local {
+            let connected = ConnectCtx::is_connected();
+            if connected && addr == LocalAddr::current() {
+                LastSeen::now();
+            } else if !connected {
+                let task = move || ConnectCtx::connect(addr);
+                if token == 0 {
+                    tokio::task::spawn_blocking(task);
+                } else {
+                    ThreadPool.spawn(task);
                 }
-            } else {
-                tokio::spawn(ConnectCtx::connect(addr));
             }
         }
-        tokio::spawn(send(buf, n, token, !socket, _p));
+
+        tokio::spawn(send(buf, n, token, !socket, !is_local, _p));
     }
 }

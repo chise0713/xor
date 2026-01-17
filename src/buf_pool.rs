@@ -7,91 +7,81 @@ use std::{
 
 use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
+use crossbeam_utils::CachePadded;
 use rayon::{
     ThreadPoolBuilder,
     iter::{IntoParallelIterator as _, ParallelIterator as _},
 };
 use tokio::sync::{OnceCell, Semaphore as SP};
+use wide::u64x8;
 
 static POOL_SEM: SP = SP::const_new(0);
 
-// https://rust-lang.github.io/hashbrown/src/crossbeam_utils/cache_padded.rs.html#128-130
-pub const CACHELINE_ALIGN: usize = {
-    #[cfg(any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "powerpc64",
-    ))]
-    {
-        128
-    }
-    #[cfg(any(
-        target_arch = "arm",
-        target_arch = "mips",
-        target_arch = "mips64",
-        target_arch = "riscv64",
-    ))]
-    {
-        32
-    }
-    #[cfg(target_arch = "s390x")]
-    {
-        256
-    }
-    #[cfg(not(any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "powerpc64",
-        target_arch = "arm",
-        target_arch = "mips",
-        target_arch = "mips64",
-        target_arch = "riscv64",
-        target_arch = "s390x",
-    )))]
-    {
-        64
-    }
-};
+pub const SIMD_WIDTH: usize = size_of::<u64x8>();
 
 #[derive(Debug)]
-pub struct AlignBox {
+struct Raw {
     ptr: NonNull<u8>,
-    len: usize,
+    padded_len: usize,
 }
 
+#[derive(Debug)]
+pub struct AlignBox(CachePadded<Raw>);
+
+pub const CACHELINE_ALIGN: usize = size_of::<AlignBox>();
+
 unsafe impl Send for AlignBox {}
-unsafe impl Sync for AlignBox {}
 
 impl AlignBox {
-    pub fn new(len: usize) -> Self {
-        let layout = Layout::from_size_align(len, CACHELINE_ALIGN).unwrap();
+    pub fn new(size: usize) -> Self {
+        let align_size = CACHELINE_ALIGN.max(SIMD_WIDTH);
+        let padded_len = size.div_ceil(SIMD_WIDTH) * SIMD_WIDTH;
+        let layout = Layout::from_size_align(padded_len, align_size).unwrap();
         let raw_ptr = unsafe { alloc::alloc_zeroed(layout) };
         let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
-        Self { ptr, len }
+        Self(CachePadded::new(Raw { ptr, padded_len }))
     }
 }
 
 impl Drop for AlignBox {
     fn drop(&mut self) {
-        let layout = Layout::from_size_align(self.len, CACHELINE_ALIGN).unwrap();
+        let align_size = CACHELINE_ALIGN.max(SIMD_WIDTH);
+        let layout = Layout::from_size_align(self.0.padded_len, align_size).unwrap();
         unsafe {
-            alloc::dealloc(self.ptr.as_ptr(), layout);
+            alloc::dealloc(self.0.ptr.as_ptr(), layout);
         }
     }
 }
 
 impl Deref for AlignBox {
     type Target = [u8];
+
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        &self.0
     }
 }
 
 impl DerefMut for AlignBox {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+        &mut self.0
+    }
+}
+
+impl Deref for Raw {
+    type Target = [u8];
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.padded_len) }
+    }
+}
+
+impl DerefMut for Raw {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.padded_len) }
     }
 }
 

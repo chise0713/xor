@@ -1,36 +1,39 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
+use anyhow::Result;
+use coarsetime::Instant;
 use log::info;
-use tokio::sync::{Mutex, OnceCell, SetError};
+use parking_lot::RwLock;
+use tokio::sync::OnceCell;
 
-const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
+pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
 static CONNECTED: AtomicBool = AtomicBool::new(false);
-static LOCAL_ADDR: Mutex<SocketAddr> = Mutex::const_new(NULL_SOCKET_ADDR);
+static LOCAL_ADDR: RwLock<SocketAddr> = RwLock::new(NULL_SOCKET_ADDR);
 
-static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
 static START: OnceCell<Instant> = OnceCell::const_new();
+static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
 
 pub struct LocalAddr;
 
 impl LocalAddr {
     #[inline(always)]
-    pub async fn current() -> SocketAddr {
-        *LOCAL_ADDR.lock().await
+    pub fn current() -> SocketAddr {
+        *LOCAL_ADDR.read()
     }
 
     #[inline(always)]
-    async fn set(addr: SocketAddr) {
-        *LOCAL_ADDR.lock().await = addr
+    fn set(addr: SocketAddr) {
+        *LOCAL_ADDR.write() = addr
     }
 
     #[inline(always)]
-    async fn clear() {
-        *LOCAL_ADDR.lock().await = NULL_SOCKET_ADDR
+    fn clear() {
+        *LOCAL_ADDR.write() = NULL_SOCKET_ADDR
     }
 }
 
@@ -38,9 +41,9 @@ pub struct ConnectCtx;
 
 impl ConnectCtx {
     #[inline(always)]
-    pub async fn connect(addr: SocketAddr) {
+    pub fn connect(addr: SocketAddr) {
         if ConnectCtx::try_connect() {
-            LocalAddr::set(addr).await;
+            LocalAddr::set(addr);
             info!("connected client {addr}");
         }
     }
@@ -53,7 +56,7 @@ impl ConnectCtx {
     #[inline(always)]
     pub async fn disconnect() {
         CONNECTED.store(false, Ordering::Release);
-        LocalAddr::clear().await;
+        LocalAddr::clear();
     }
 
     #[inline(always)]
@@ -68,8 +71,8 @@ pub struct Started;
 
 impl Started {
     #[inline(always)]
-    pub fn now() -> Result<(), SetError<Instant>> {
-        START.set(Instant::now())
+    pub fn now() -> Result<()> {
+        Ok(START.set(Instant::now())?)
     }
 
     #[inline(always)]
@@ -85,16 +88,16 @@ pub struct LastSeen;
 impl LastSeen {
     #[inline(always)]
     pub fn now() {
-        LAST_SEEN.store(
-            Instant::now().duration_since(Started::at()).as_millis() as u64,
-            Ordering::Relaxed,
-        )
+        LAST_SEEN.store(Started::at().elapsed().as_millis(), Ordering::Relaxed);
     }
 
     #[inline(always)]
     pub fn elapsed() -> Duration {
-        Started::at()
-            .elapsed()
-            .saturating_sub(Duration::from_millis(LAST_SEEN.load(Ordering::Relaxed)))
+        Duration::from_millis(
+            Started::at()
+                .elapsed()
+                .as_millis()
+                .saturating_sub(LAST_SEEN.load(Ordering::Relaxed)),
+        )
     }
 }
