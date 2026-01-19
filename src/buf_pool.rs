@@ -2,16 +2,12 @@ use std::{
     alloc::{self, Layout},
     ops::{Deref, DerefMut},
     ptr::NonNull,
-    slice, thread,
+    slice,
 };
 
 use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
 use crossbeam_utils::CachePadded;
-use rayon::{
-    ThreadPoolBuilder,
-    iter::{IntoParallelIterator as _, ParallelIterator as _},
-};
 use tokio::sync::{OnceCell, Semaphore as SP};
 use wide::u64x8;
 
@@ -93,16 +89,7 @@ impl BufPool {
     pub fn init(limit: usize, payload_max: usize) -> Result<()> {
         BUF_POOL.set(ArrayQueue::new(limit))?;
 
-        let temp_tp = ThreadPoolBuilder::new()
-            .num_threads(thread::available_parallelism()?.get())
-            .thread_name(|i| format!("buf-init-{}", i))
-            .build()?;
-
-        temp_tp.install(|| {
-            (0..limit)
-                .into_par_iter()
-                .for_each(|_| BufPool.push(AlignBox::new(payload_max)).unwrap())
-        });
+        (0..limit).for_each(|_| BufPool.push(AlignBox::new(payload_max)).unwrap());
 
         Semaphore.add_permits(limit);
         Ok(())

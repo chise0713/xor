@@ -4,10 +4,10 @@ mod local;
 mod logger;
 mod shutdown;
 mod socket;
-mod thread_pool;
 mod xor;
 
 use std::{
+    io::ErrorKind,
     process::ExitCode,
     sync::atomic::{AtomicUsize, Ordering},
     thread,
@@ -20,8 +20,8 @@ use log_limit::warn_limit_global;
 use tokio::{
     runtime::Builder,
     signal,
-    sync::{SemaphorePermit, TryAcquireError, oneshot},
-    task::JoinSet,
+    sync::{SemaphorePermit, TryAcquireError},
+    task::{JoinSet, LocalSet},
     time,
 };
 
@@ -32,7 +32,6 @@ use crate::{
     logger::Logger,
     shutdown::Shutdown,
     socket::{Socket, Sockets},
-    thread_pool::ThreadPool,
     xor::xor,
 };
 
@@ -91,22 +90,22 @@ fn main() -> Result<ExitCode> {
     let payload_max = mtu - LINK_PAYLOAD_OFFSET;
     let limit = buffer_limit_usize.unwrap_or(K);
 
-    let total_threads = thread::available_parallelism()?.get();
+    let total_threads = thread::available_parallelism()?.get().max(1);
+    const MAIN_THREAD: usize = 1;
+    let worker_threads = total_threads.div_ceil(2).saturating_sub(MAIN_THREAD).max(1);
+    let blocking_threads = total_threads
+        .saturating_sub(worker_threads + MAIN_THREAD)
+        .max(1);
     let rt = Builder::new_multi_thread()
         .enable_all()
         .thread_name_fn(|| {
             static ID: AtomicUsize = AtomicUsize::new(0);
             let id = ID.fetch_add(1, Ordering::SeqCst);
-            format!("tokio-runtime-{}", id)
+            format!("xor-{}", id)
         })
-        .worker_threads(if token == 0 {
-            total_threads
-        } else {
-            let worker_threads = total_threads.div_ceil(2).max(1);
-            let compute_threads = total_threads.saturating_sub(worker_threads).max(1);
-            ThreadPool::build(compute_threads)?;
-            worker_threads
-        })
+        .worker_threads(worker_threads)
+        .max_blocking_threads(blocking_threads)
+        .thread_keep_alive(Duration::from_secs(u64::MAX))
         .build()?;
 
     let sockets = Sockets::new(&listen_address, &remote_address)?;
@@ -119,6 +118,7 @@ fn main() -> Result<ExitCode> {
             time_out,
             token,
             sockets,
+            worker_threads,
         }
         .enter(),
     )
@@ -128,6 +128,7 @@ struct AsyncMain {
     time_out: f64,
     token: u8,
     sockets: Sockets,
+    worker_threads: usize,
 }
 
 impl AsyncMain {
@@ -136,8 +137,12 @@ impl AsyncMain {
         self.sockets.convert()?;
 
         let mut join_set = JoinSet::new();
-        join_set.spawn(recv(self.token, Socket::Local));
-        join_set.spawn(recv(self.token, Socket::Remote));
+        (0..self.worker_threads).for_each(|_| {
+            join_set.spawn(recv(self.token, Socket::Local));
+            join_set.spawn(recv(self.token, Socket::Remote));
+        });
+        let local_set = LocalSet::new();
+        join_set.spawn_local_on(recv(self.token, Socket::Local), &local_set);
 
         info!("service started");
 
@@ -152,11 +157,12 @@ impl AsyncMain {
             _ = watch_dog(self.time_out) => {
                 error!("the watch dog exited prematurely");
             },
+            _ = local_set.run_until(recv(self.token, Socket::Remote)) => {}
             _ = join_set.join_next() => {
                 error!("a network recv task exited prematurely");
             },
         }
-        join_set.shutdown().await;
+        join_set.abort_all();
 
         Ok(exit_code)
     }
@@ -189,44 +195,39 @@ fn try_push(buf: AlignBox) {
     }
 }
 
-async fn send(
-    buf: AlignBox,
+fn send(
+    mut buf: AlignBox,
     n: usize,
     token: u8,
     socket: Socket,
     is_local: bool,
     _p: SemaphorePermit<'_>,
 ) {
-    let buf = if token == 0 {
-        buf
-    } else {
-        let (tx, rx) = oneshot::channel();
-
-        ThreadPool.spawn_fifo(move || {
-            xor(tx, buf, n, token);
-        });
-
-        let Ok(buf) = rx.await else {
-            error!("sender dropped without sending");
-            Shutdown::request();
-            return;
-        };
-
-        buf
+    if token != 0 {
+        xor(buf.as_mut_ptr(), n, token);
     };
 
-    let send_result = if is_local {
+    let result = if is_local {
         let addr = LocalAddr::current();
-        socket.send_to(&buf[..n], addr).await
+        socket.try_send_to(&buf[..n], addr)
     } else {
-        socket.send(&buf[..n]).await
+        socket.try_send(&buf[..n])
     };
-    if let Err(e) = send_result
-        && Shutdown::try_request()
-    {
-        error!("{socket} socket: {e}");
-        return;
-    };
+    match result {
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::WouldBlock => {
+            warn_limit_global!(
+                1,
+                Duration::from_millis(250),
+                "{socket} socket tx buffer is full, dropping packet"
+            )
+        }
+        Err(e) => {
+            if Shutdown::try_request() {
+                error!("{e}");
+            }
+        }
+    }
 
     try_push(buf);
 }
@@ -272,15 +273,10 @@ async fn recv(token: u8, socket: Socket) {
             if connected && addr == LocalAddr::current() {
                 LastSeen::now();
             } else if !connected {
-                let task = move || ConnectCtx::connect(addr);
-                if token == 0 {
-                    tokio::task::spawn_blocking(task);
-                } else {
-                    ThreadPool.spawn(task);
-                }
+                tokio::task::spawn_blocking(move || ConnectCtx::connect(addr));
             }
         }
 
-        tokio::spawn(send(buf, n, token, !socket, !is_local, _p));
+        tokio::task::spawn_blocking(move || send(buf, n, token, !socket, !is_local, _p));
     }
 }
