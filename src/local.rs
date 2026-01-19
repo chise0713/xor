@@ -30,11 +30,6 @@ impl LocalAddr {
     fn set(addr: SocketAddr) {
         *LOCAL_ADDR.write() = addr
     }
-
-    #[inline(always)]
-    fn clear() {
-        *LOCAL_ADDR.write() = NULL_SOCKET_ADDR
-    }
 }
 
 pub struct ConnectCtx;
@@ -54,9 +49,8 @@ impl ConnectCtx {
     }
 
     #[inline(always)]
-    pub async fn disconnect() {
+    pub fn disconnect() {
         CONNECTED.store(false, Ordering::Release);
-        LocalAddr::clear();
     }
 
     #[inline(always)]

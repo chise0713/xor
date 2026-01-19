@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "bench", feature(test))]
+
 mod args;
 mod buf_pool;
 mod local;
@@ -42,6 +44,8 @@ const LINK_PAYLOAD_OFFSET: usize = UDP_HEADER + IPV6_HEADER;
 
 const K: usize = 2usize.pow(10);
 const M: usize = K.pow(2);
+
+const WARN_LIMIT_DUR: Duration = Duration::from_millis(250);
 
 fn main() -> Result<ExitCode> {
     let Args {
@@ -93,22 +97,19 @@ fn main() -> Result<ExitCode> {
     let total_threads = thread::available_parallelism()?.get().max(1);
     const MAIN_THREAD: usize = 1;
     let worker_threads = total_threads.div_ceil(2).saturating_sub(MAIN_THREAD).max(1);
-    let blocking_threads = total_threads
-        .saturating_sub(worker_threads + MAIN_THREAD)
-        .max(1);
     let rt = Builder::new_multi_thread()
         .enable_all()
+        .thread_stack_size(256 * K)
         .thread_name_fn(|| {
             static ID: AtomicUsize = AtomicUsize::new(0);
             let id = ID.fetch_add(1, Ordering::SeqCst);
             format!("xor-{}", id)
         })
-        .worker_threads(worker_threads)
-        .max_blocking_threads(blocking_threads)
-        .thread_keep_alive(Duration::from_secs(u64::MAX))
+        .worker_threads(total_threads)
         .build()?;
 
     let sockets = Sockets::new(&listen_address, &remote_address)?;
+    coarsetime::Updater::new(50).start()?;
     BufPool::init(limit, payload_max)?;
     Logger::init();
     Started::now()?;
@@ -138,15 +139,16 @@ impl AsyncMain {
 
         let mut join_set = JoinSet::new();
         (0..self.worker_threads).for_each(|_| {
-            join_set.spawn(recv(self.token, Socket::Local));
             join_set.spawn(recv(self.token, Socket::Remote));
+            join_set.spawn(recv(self.token, Socket::Local));
         });
         let local_set = LocalSet::new();
-        join_set.spawn_local_on(recv(self.token, Socket::Local), &local_set);
+        join_set.spawn_local_on(recv(self.token, Socket::Remote), &local_set);
 
         info!("service started");
 
         let mut exit_code = ExitCode::FAILURE;
+        let mut net_fail = false;
 
         tokio::select! {
             _ = signal::ctrl_c() => {
@@ -157,17 +159,23 @@ impl AsyncMain {
             _ = watch_dog(self.time_out) => {
                 error!("the watch dog exited prematurely");
             },
-            _ = local_set.run_until(recv(self.token, Socket::Remote)) => {}
             _ = join_set.join_next() => {
-                error!("a network recv task exited prematurely");
+                net_fail = true;
             },
+            _ = local_set.run_until(recv(self.token, Socket::Local)) => {
+                net_fail = true;
+            }
         }
         join_set.abort_all();
+        if net_fail {
+            error!("a network recv task exited prematurely");
+        }
 
         Ok(exit_code)
     }
 }
 
+#[inline(always)]
 async fn watch_dog(time_out: f64) {
     let timeout_dur = Duration::from_secs_f64(time_out);
     let sleep_dur = Duration::from_secs_f64(time_out);
@@ -183,11 +191,12 @@ async fn watch_dog(time_out: f64) {
         }
 
         let addr = LocalAddr::current();
-        ConnectCtx::disconnect().await;
+        ConnectCtx::disconnect();
         info!("client timeout {addr}");
     }
 }
 
+#[inline(always)]
 fn try_push(buf: AlignBox) {
     if BufPool.push(buf).is_err() {
         error!("failed to push buf back");
@@ -195,6 +204,7 @@ fn try_push(buf: AlignBox) {
     }
 }
 
+#[inline(always)]
 fn send(
     mut buf: AlignBox,
     n: usize,
@@ -241,7 +251,7 @@ async fn recv(token: u8, socket: Socket) {
                 break;
             }
             Err(TryAcquireError::NoPermits) => {
-                warn_limit_global!(1, Duration::from_millis(250), "semaphore backpressure");
+                warn_limit_global!(1, WARN_LIMIT_DUR, "semaphore backpressure");
                 let _p = Semaphore.acquire().await;
                 debug_assert!(_p.is_ok());
                 unsafe { _p.unwrap_unchecked() }
@@ -251,11 +261,7 @@ async fn recv(token: u8, socket: Socket) {
         let Some(mut buf) = BufPool.pop() else {
             let mut trashing = [0u8];
             let _ = socket.recv_from(&mut trashing).await;
-            warn_limit_global!(
-                1,
-                Duration::from_millis(250),
-                "buf_pool is empty, dropping packet"
-            );
+            warn_limit_global!(1, WARN_LIMIT_DUR, "buf_pool is empty, dropping packet");
             continue;
         };
 
@@ -270,13 +276,22 @@ async fn recv(token: u8, socket: Socket) {
 
         if is_local {
             let connected = ConnectCtx::is_connected();
-            if connected && addr == LocalAddr::current() {
+            let local_addr = LocalAddr::current();
+            if connected && addr == local_addr {
                 LastSeen::now();
             } else if !connected {
-                tokio::task::spawn_blocking(move || ConnectCtx::connect(addr));
+                ConnectCtx::connect(addr);
+            } else {
+                warn_limit_global!(
+                    1,
+                    WARN_LIMIT_DUR,
+                    "cached={local_addr}, current={addr}, dropping"
+                );
+                try_push(buf);
+                continue;
             }
         }
 
-        tokio::task::spawn_blocking(move || send(buf, n, token, !socket, !is_local, _p));
+        send(buf, n, token, !socket, !is_local, _p);
     }
 }

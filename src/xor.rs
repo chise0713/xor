@@ -14,17 +14,17 @@ fn align_check(ptr: *const u8) {
     }
 }
 
+#[inline(always)]
 pub fn xor(ptr: *mut u8, n: usize, token: u8) {
     align_check(ptr);
 
     let n_simd = n / SIMD_WIDTH;
     let data: &mut [u64x8] = unsafe { slice::from_raw_parts_mut(ptr.cast(), n_simd) };
 
-    let simd = u64x8::splat(u64::from_ne_bytes([token; 8]));
+    const BROADCAST_MUL: u64 = 0x0101010101010101;
+    let simd = u64x8::splat(BROADCAST_MUL.wrapping_mul(token as u64));
 
-    data.iter_mut().for_each(|chunk| {
-        *chunk ^= simd;
-    });
+    data.iter_mut().for_each(|chunk| *chunk ^= simd);
 
     let rem = n % SIMD_WIDTH;
     if rem == 0 {
@@ -36,4 +36,48 @@ pub fn xor(ptr: *mut u8, n: usize, token: u8) {
     tail.iter_mut().for_each(|byte| {
         *byte ^= token;
     })
+}
+
+#[cfg(all(test, feature = "bench"))]
+mod bench {
+    extern crate test;
+
+    use test::Bencher;
+
+    use crate::{K, buf_pool::AlignBox, xor::xor};
+
+    const TEST_ITER: usize = K;
+
+    const N: usize = 16 * K;
+    const TOKEN: u8 = 0xFF;
+
+    #[bench]
+    fn simd(b: &mut Bencher) {
+        let mut data = AlignBox::new(N);
+        let ptr = data.as_mut_ptr();
+        b.iter(|| {
+            (0..TEST_ITER).for_each(|_| {
+                xor(ptr, N, TOKEN);
+                xor(ptr, N, TOKEN);
+            });
+        });
+    }
+
+    #[bench]
+    fn normal(b: &mut Bencher) {
+        #[inline(always)]
+        fn xor(ptr: *mut u8, n: usize, token: u8) {
+            (0..n).for_each(|i| unsafe {
+                *ptr.add(i) ^= token;
+            });
+        }
+        let mut data = unsafe { Box::new_zeroed_slice(N).assume_init() };
+        let ptr: *mut u8 = data.as_mut_ptr();
+        b.iter(|| {
+            (0..TEST_ITER).for_each(|_| {
+                xor(ptr, N, TOKEN);
+                xor(ptr, N, TOKEN);
+            });
+        });
+    }
 }
