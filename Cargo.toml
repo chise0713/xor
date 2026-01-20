@@ -1,6 +1,6 @@
 [package]
 name = "xor"
-version = "0.1.20"
+version = "0.1.21"
 edition = "2024"
 
 [features]
@@ -20,6 +20,7 @@ log_limit = { version = "^0.2", default-features = false }
 parking_lot = "0.12.5"
 socket2 = "^0.6"
 supershorty = "^0.2.4"
+tinystr = { version = "0.8.2", default-features = false, features = ["std"] }
 tokio = { version = "^1.49", default-features = false, features = [
     "macros",
     "net",

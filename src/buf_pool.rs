@@ -8,8 +8,11 @@ use std::{
 use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
 use crossbeam_utils::CachePadded;
+use tinystr::{TinyAsciiStr, tinystr};
 use tokio::sync::{OnceCell, Semaphore as SP};
 use wide::u64x8;
+
+use crate::NOT_INITED;
 
 static POOL_SEM: SP = SP::const_new(0);
 
@@ -76,7 +79,12 @@ impl BufPool {
     pub fn init(limit: usize, payload_max: usize) -> Result<()> {
         BUF_POOL.set(ArrayQueue::new(limit))?;
 
-        (0..limit).for_each(|_| BufPool.push(AlignBox::new(payload_max)).ok().unwrap());
+        (0..limit).for_each(|_| {
+            BufPool
+                .push(AlignBox::new(payload_max))
+                .ok()
+                .expect("failed to push BufPool")
+        });
 
         Semaphore.add_permits(limit);
         Ok(())
@@ -88,9 +96,9 @@ impl Deref for BufPool {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        let b = BUF_POOL.get();
-        debug_assert!(b.is_some());
-        unsafe { b.unwrap_unchecked() }
+        let fmt: TinyAsciiStr<32> = tinystr!(32, "BufPool").concat(NOT_INITED);
+        let fmt = fmt.as_str();
+        BUF_POOL.get().expect(fmt)
     }
 }
 

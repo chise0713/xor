@@ -1,21 +1,25 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
-use anyhow::Result;
 use coarsetime::Instant;
 use log::info;
-use parking_lot::RwLock;
-use tokio::sync::OnceCell;
+use parking_lot::Mutex;
+use tinystr::{TinyAsciiStr, tinystr};
+
+use crate::{NOT_INITED, ONCE};
 
 pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
 static CONNECTED: AtomicBool = AtomicBool::new(false);
-static LOCAL_ADDR: RwLock<SocketAddr> = RwLock::new(NULL_SOCKET_ADDR);
+static LOCAL_ADDR: Mutex<SocketAddr> = Mutex::new(NULL_SOCKET_ADDR);
 
-static START: OnceCell<Instant> = OnceCell::const_new();
+static START: OnceLock<Instant> = OnceLock::new();
 static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
 
 pub struct LocalAddr;
@@ -23,12 +27,12 @@ pub struct LocalAddr;
 impl LocalAddr {
     #[inline(always)]
     pub fn current() -> SocketAddr {
-        *LOCAL_ADDR.read()
+        *LOCAL_ADDR.lock()
     }
 
     #[inline(always)]
     fn set(addr: SocketAddr) {
-        *LOCAL_ADDR.write() = addr
+        *LOCAL_ADDR.lock() = addr
     }
 }
 
@@ -65,15 +69,17 @@ pub struct Started;
 
 impl Started {
     #[inline(always)]
-    pub fn now() -> Result<()> {
-        Ok(START.set(Instant::now())?)
+    pub fn now() {
+        let fmt: TinyAsciiStr<32> = tinystr!(32, "Started").concat(ONCE);
+        let fmt = fmt.as_str();
+        START.set(Instant::now()).expect(fmt)
     }
 
     #[inline(always)]
     fn at() -> Instant {
-        let s = START.get();
-        debug_assert!(s.is_some());
-        unsafe { *s.unwrap_unchecked() }
+        let fmt: TinyAsciiStr<32> = tinystr!(32, "Started").concat(NOT_INITED);
+        let fmt = fmt.as_str();
+        *START.get().expect(fmt)
     }
 }
 

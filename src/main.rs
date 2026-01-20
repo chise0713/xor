@@ -19,6 +19,7 @@ use std::{
 use anyhow::Result;
 use log::{Level, error, info, log_enabled, trace};
 use log_limit::warn_limit_global;
+use tinystr::{TinyAsciiStr, tinystr};
 use tokio::{
     runtime::Builder,
     signal,
@@ -36,6 +37,9 @@ use crate::{
     socket::{Socket, Sockets},
     xor::xor,
 };
+
+static ONCE: TinyAsciiStr<18> = tinystr!(18, "called once before");
+static NOT_INITED: TinyAsciiStr<23> = tinystr!(23, "not initialzed before");
 
 const LINK_MTU_MAX: usize = 65535;
 const UDP_HEADER: usize = 8;
@@ -94,9 +98,11 @@ fn main() -> Result<ExitCode> {
     let payload_max = mtu - LINK_PAYLOAD_OFFSET;
     let limit = buffer_limit_usize.unwrap_or(K);
 
-    let total_threads = thread::available_parallelism()?.get().max(1);
     const MAIN_THREAD: usize = 1;
-    let worker_threads = total_threads.div_ceil(2).saturating_sub(MAIN_THREAD).max(1);
+    let worker_threads = thread::available_parallelism()?
+        .get()
+        .saturating_sub(MAIN_THREAD)
+        .max(1);
     let rt = Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(256 * K)
@@ -105,14 +111,14 @@ fn main() -> Result<ExitCode> {
             let id = ID.fetch_add(1, Ordering::SeqCst);
             format!("xor-{}", id)
         })
-        .worker_threads(total_threads)
+        .worker_threads(worker_threads)
         .build()?;
 
     let sockets = Sockets::new(&listen_address, &remote_address)?;
     coarsetime::Updater::new(50).start()?;
     BufPool::init(limit, payload_max)?;
     Logger::init();
-    Started::now()?;
+    Started::now();
 
     rt.block_on(
         AsyncMain {
@@ -173,7 +179,10 @@ impl AsyncMain {
             error!("a network recv task exited prematurely");
         }
         if log_enabled!(Level::Trace) {
-            trace!("max packet payload size: {}", N.load(Ordering::Relaxed));
+            let n = N.load(Ordering::Relaxed);
+            if n != 0 {
+                trace!("max packet payload size: {n}");
+            }
         }
 
         Ok(exit_code)
@@ -257,9 +266,7 @@ async fn recv(token: u8, socket: Socket) {
             }
             Err(TryAcquireError::NoPermits) => {
                 warn_limit_global!(1, WARN_LIMIT_DUR, "semaphore backpressure");
-                let _p = Semaphore.acquire().await;
-                debug_assert!(_p.is_ok());
-                unsafe { _p.unwrap_unchecked() }
+                Semaphore.acquire().await.unwrap()
             }
         };
 

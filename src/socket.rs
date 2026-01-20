@@ -2,19 +2,21 @@ use std::{
     fmt::Display,
     net::{SocketAddr, UdpSocket as StdUdpSocket},
     ops::{Deref, Not},
+    sync::OnceLock,
 };
 
 use anyhow::Result;
 use socket2::{Domain, Protocol, Type};
-use tokio::{net::UdpSocket, sync::OnceCell};
+use tinystr::{TinyAsciiStr, tinystr};
+use tokio::net::UdpSocket;
 
-use crate::M;
+use crate::{M, NOT_INITED, ONCE};
 
 const RECV_BUF_SIZE: usize = 32 * M;
 const SEND_BUF_SIZE: usize = RECV_BUF_SIZE;
 
-static LOCAL_SOCKET: OnceCell<UdpSocket> = OnceCell::const_new();
-static REMOTE_SOCKET: OnceCell<UdpSocket> = OnceCell::const_new();
+static LOCAL_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
+static REMOTE_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy)]
 pub enum Socket {
@@ -27,17 +29,11 @@ impl Deref for Socket {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
+        let fmt: TinyAsciiStr<32> = tinystr!(32, "Socket").concat(NOT_INITED);
+        let fmt = fmt.as_str();
         match *self {
-            Socket::Local => {
-                let l = LOCAL_SOCKET.get();
-                debug_assert!(l.is_some());
-                unsafe { l.unwrap_unchecked() }
-            }
-            Socket::Remote => {
-                let r = REMOTE_SOCKET.get();
-                debug_assert!(r.is_some());
-                unsafe { r.unwrap_unchecked() }
-            }
+            Socket::Local => LOCAL_SOCKET.get().expect(fmt),
+            Socket::Remote => REMOTE_SOCKET.get().expect(fmt),
         }
     }
 }
@@ -109,8 +105,14 @@ impl Sockets {
     }
 
     pub fn convert(self) -> Result<()> {
-        LOCAL_SOCKET.set(UdpSocket::from_std(self.local)?)?;
-        REMOTE_SOCKET.set(UdpSocket::from_std(self.remote)?)?;
+        let fmt: TinyAsciiStr<32> = tinystr!(32, "Sockets::convert()").concat(ONCE);
+        let fmt = fmt.as_str();
+        LOCAL_SOCKET
+            .set(UdpSocket::from_std(self.local)?)
+            .expect(fmt);
+        REMOTE_SOCKET
+            .set(UdpSocket::from_std(self.remote)?)
+            .expect(fmt);
         Ok(())
     }
 }
