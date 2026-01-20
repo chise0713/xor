@@ -17,7 +17,7 @@ use std::{
 };
 
 use anyhow::Result;
-use log::{error, info};
+use log::{Level, error, info, log_enabled, trace};
 use log_limit::warn_limit_global;
 use tokio::{
     runtime::Builder,
@@ -125,6 +125,8 @@ fn main() -> Result<ExitCode> {
     )
 }
 
+static N: AtomicUsize = AtomicUsize::new(0);
+
 struct AsyncMain {
     time_out: f64,
     token: u8,
@@ -169,6 +171,9 @@ impl AsyncMain {
         join_set.abort_all();
         if net_fail {
             error!("a network recv task exited prematurely");
+        }
+        if log_enabled!(Level::Trace) {
+            trace!("max packet payload size: {}", N.load(Ordering::Relaxed));
         }
 
         Ok(exit_code)
@@ -228,7 +233,7 @@ fn send(
         Err(e) if e.kind() == ErrorKind::WouldBlock => {
             warn_limit_global!(
                 1,
-                Duration::from_millis(250),
+                WARN_LIMIT_DUR,
                 "{socket} socket tx buffer is full, dropping packet"
             )
         }
@@ -273,6 +278,9 @@ async fn recv(token: u8, socket: Socket) {
                 break;
             }
         };
+        if log_enabled!(Level::Trace) {
+            N.fetch_max(n, Ordering::Relaxed);
+        }
 
         if is_local {
             let connected = ConnectCtx::is_connected();
