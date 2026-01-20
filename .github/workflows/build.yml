@@ -46,8 +46,6 @@ jobs:
             runs-on: macos-latest
           - target: aarch64-apple-darwin
             runs-on: macos-latest
-        toolchain:
-          - stable
     steps:
       - name: Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -83,8 +81,6 @@ jobs:
             runs-on: ubuntu-latest
           - target: aarch64-unknown-linux-musl
             runs-on: ubuntu-latest
-        toolchain:
-          - stable
     steps:
       - name: Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -117,8 +113,6 @@ jobs:
             runs-on: windows-latest
           ##- target: i686-pc-windows-gnu
           ##  runs-on: windows-latest           # error: linker `i686-w64-mingw32-gcc` not found
-        toolchain:
-          - stable
     steps:
       - name: Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -137,3 +131,40 @@ jobs:
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.platform.target }}
           path: target/${{ matrix.platform.target }}/release/${{ env.BINARY_NAME }}.exe
+  build-x86-64:
+    name: ${{ matrix.target }}-v${{ matrix.version }}-${{ matrix.extra-features }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl]
+        version: [2, 3, 4]
+        extra-features: [io-uring, default]
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        with:
+          fetch-depth: 1
+      - name: Determine
+        run: |
+          if [ "${{ matrix.extra-features }}" = "io-uring" ]; then
+            echo 'EXTRA_CROSS_ARGS=--features io-uring' >> "${{ github.env }}"
+            echo 'EXTRA_RUST_FLAGS=--cfg tokio_unstable' >> "${{ github.env }}"
+            echo 'ARTIFACT_SUFFIX=-io-uring' >> "${{ github.env }}"
+          fi
+        shell: bash
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v1
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v${{ matrix.version }} ${{ env.EXTRA_RUST_FLAGS }}"
+        with:
+          rust-cache-parameters: '{"prefix-key":"cross"}'
+          command: "build"
+          target: ${{ matrix.target }}
+          args: "--locked --release ${{ env.EXTRA_CROSS_ARGS }}"
+          strip: true
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.target }}-v${{ matrix.version }}${{ env.ARTIFACT_SUFFIX }}
+          path: target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}
