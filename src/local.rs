@@ -9,7 +9,7 @@ use std::{
 
 use coarsetime::Instant;
 use log::info;
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use tinystr::{TinyAsciiStr, tinystr};
 
 use crate::{NOT_INITED, ONCE};
@@ -17,7 +17,7 @@ use crate::{NOT_INITED, ONCE};
 pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
 static CONNECTED: AtomicBool = AtomicBool::new(false);
-static LOCAL_ADDR: Mutex<SocketAddr> = Mutex::new(NULL_SOCKET_ADDR);
+static LOCAL_ADDR: RwLock<SocketAddr> = RwLock::new(NULL_SOCKET_ADDR);
 
 static START: OnceLock<Instant> = OnceLock::new();
 static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
@@ -27,12 +27,12 @@ pub struct LocalAddr;
 impl LocalAddr {
     #[inline(always)]
     pub fn current() -> SocketAddr {
-        *LOCAL_ADDR.lock()
+        *LOCAL_ADDR.read()
     }
 
     #[inline(always)]
     fn set(addr: SocketAddr) {
-        *LOCAL_ADDR.lock() = addr
+        *LOCAL_ADDR.write() = addr
     }
 }
 
