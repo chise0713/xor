@@ -7,10 +7,9 @@ use std::{
 
 use anyhow::Result;
 use socket2::{Domain, Protocol, Type};
-use tinystr::{TinyAsciiStr, tinystr};
 use tokio::net::UdpSocket;
 
-use crate::{M, NOT_INITED, ONCE, TINY_STR_STACK};
+use crate::{INIT, M, ONCE, static_concat};
 
 const RECV_BUF_SIZE: usize = 32 * M;
 const SEND_BUF_SIZE: usize = RECV_BUF_SIZE;
@@ -29,11 +28,10 @@ impl Deref for Socket {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        let fmt: TinyAsciiStr<TINY_STR_STACK> = tinystr!(32, "Socket: ").concat(NOT_INITED);
-        let fmt = fmt.as_str();
+        static_concat!(CTX = "Socket: " + INIT);
         match *self {
-            Socket::Local => LOCAL_SOCKET.get().expect(fmt),
-            Socket::Remote => REMOTE_SOCKET.get().expect(fmt),
+            Socket::Local => LOCAL_SOCKET.get().expect(&CTX),
+            Socket::Remote => REMOTE_SOCKET.get().expect(&CTX),
         }
     }
 }
@@ -105,14 +103,13 @@ impl Sockets {
     }
 
     pub fn convert(self) -> Result<()> {
-        let fmt: TinyAsciiStr<TINY_STR_STACK> = tinystr!(32, "Sockets::convert(): ").concat(ONCE);
-        let fmt = fmt.as_str();
+        static_concat!(CTX = "Sockets::convert(): " + ONCE);
         LOCAL_SOCKET
             .set(UdpSocket::from_std(self.local)?)
-            .expect(fmt);
+            .expect(&CTX);
         REMOTE_SOCKET
             .set(UdpSocket::from_std(self.remote)?)
-            .expect(fmt);
+            .expect(&CTX);
         Ok(())
     }
 }

@@ -41,7 +41,8 @@ mod bench {
 
     use test::Bencher;
 
-    use crate::{K, buf_pool::AlignBox, xor::xor};
+    use super::xor;
+    use crate::{K, buf_pool::AlignBox};
 
     const TEST_ITER: usize = K;
 

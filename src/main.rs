@@ -19,7 +19,6 @@ use std::{
 use anyhow::Result;
 use log::{Level, error, info, log_enabled, trace};
 use log_limit::warn_limit_global;
-use tinystr::{TinyAsciiStr, tinystr};
 use tokio::{
     runtime::Builder,
     signal,
@@ -38,10 +37,30 @@ use crate::{
     xor::xor,
 };
 
-static ONCE: TinyAsciiStr<18> = tinystr!(18, "called once before");
-static NOT_INITED: TinyAsciiStr<23> = tinystr!(23, "not initialzed before");
+#[macro_export]
+macro_rules! static_tinystr {
+    ($name:ident, $str:literal) => {
+        static $name: ::tinystr::TinyAsciiStr<{ $str.len() }> = {
+            match ::tinystr::TinyAsciiStr::try_from_str($str) {
+                Ok(s) => s,
+                Err(_) => panic!(concat!("failed to construct tinystr from \"", $str, "\"")),
+            }
+        };
+    };
+}
 
-const TINY_STR_STACK: usize = 32;
+static_tinystr!(ONCE, "called once before");
+static_tinystr!(INIT, "not initialzed before");
+
+#[macro_export]
+macro_rules! static_concat {
+    ($vis:vis $name:ident = $str:literal + $suffix:ident) => {
+        $vis static $name: ::tinystr::TinyAsciiStr<48> = {
+            $crate::static_tinystr!(TEMP, $str);
+            TEMP.concat($suffix)
+        };
+    };
+}
 
 const LINK_MTU_MAX: usize = 65535;
 const UDP_HEADER: usize = 8;

@@ -8,11 +8,10 @@ use std::{
 use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
 use crossbeam_utils::CachePadded;
-use tinystr::{TinyAsciiStr, tinystr};
 use tokio::sync::{OnceCell, Semaphore as SP};
 use wide::u64x8;
 
-use crate::{NOT_INITED, TINY_STR_STACK};
+use crate::{INIT, static_concat};
 
 static POOL_SEM: SP = SP::const_new(0);
 
@@ -96,9 +95,8 @@ impl Deref for BufPool {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        let fmt: TinyAsciiStr<TINY_STR_STACK> = tinystr!(32, "BufPool: ").concat(NOT_INITED);
-        let fmt = fmt.as_str();
-        BUF_POOL.get().expect(fmt)
+        static_concat!(CTX = "BufPool" + INIT);
+        BUF_POOL.get().expect(&CTX)
     }
 }
 
