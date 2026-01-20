@@ -5,18 +5,15 @@ use wide::u64x8;
 use crate::buf_pool::{CACHELINE_ALIGN, SIMD_WIDTH};
 
 #[inline(always)]
-fn align_check(ptr: *const u8) {
-    let ptr = ptr as usize;
-    let aligned = ptr.is_multiple_of(CACHELINE_ALIGN);
-    debug_assert!(aligned, "buf must be {}B aligned", CACHELINE_ALIGN);
-    if !aligned {
-        unreachable!()
+fn align_check(ptr: usize) {
+    if !ptr.is_multiple_of(CACHELINE_ALIGN) {
+        unreachable!("buf must be {}B aligned", CACHELINE_ALIGN)
     }
 }
 
 #[inline(always)]
 pub fn xor(ptr: *mut u8, n: usize, token: u8) {
-    align_check(ptr);
+    align_check(ptr as usize);
 
     let n_simd = n / SIMD_WIDTH;
     let data: &mut [u64x8] = unsafe { slice::from_raw_parts_mut(ptr.cast(), n_simd) };
