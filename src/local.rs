@@ -12,7 +12,7 @@ use log::info;
 use parking_lot::RwLock;
 use tinystr::{TinyAsciiStr, tinystr};
 
-use crate::{NOT_INITED, ONCE};
+use crate::{NOT_INITED, ONCE, TINY_STR_STACK};
 
 pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
@@ -70,14 +70,14 @@ pub struct Started;
 impl Started {
     #[inline(always)]
     pub fn now() {
-        let fmt: TinyAsciiStr<32> = tinystr!(32, "Started").concat(ONCE);
+        let fmt: TinyAsciiStr<TINY_STR_STACK> = tinystr!(32, "Started::now(): ").concat(ONCE);
         let fmt = fmt.as_str();
         START.set(Instant::now()).expect(fmt)
     }
 
     #[inline(always)]
     fn at() -> Instant {
-        let fmt: TinyAsciiStr<32> = tinystr!(32, "Started").concat(NOT_INITED);
+        let fmt: TinyAsciiStr<TINY_STR_STACK> = tinystr!(32, "Started::at(): ").concat(NOT_INITED);
         let fmt = fmt.as_str();
         *START.get().expect(fmt)
     }

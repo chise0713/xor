@@ -41,6 +41,8 @@ use crate::{
 static ONCE: TinyAsciiStr<18> = tinystr!(18, "called once before");
 static NOT_INITED: TinyAsciiStr<23> = tinystr!(23, "not initialzed before");
 
+const TINY_STR_STACK: usize = 32;
+
 const LINK_MTU_MAX: usize = 65535;
 const UDP_HEADER: usize = 8;
 const IPV6_HEADER: usize = 40;

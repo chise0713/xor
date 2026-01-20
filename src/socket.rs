@@ -10,7 +10,7 @@ use socket2::{Domain, Protocol, Type};
 use tinystr::{TinyAsciiStr, tinystr};
 use tokio::net::UdpSocket;
 
-use crate::{M, NOT_INITED, ONCE};
+use crate::{M, NOT_INITED, ONCE, TINY_STR_STACK};
 
 const RECV_BUF_SIZE: usize = 32 * M;
 const SEND_BUF_SIZE: usize = RECV_BUF_SIZE;
@@ -29,7 +29,7 @@ impl Deref for Socket {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        let fmt: TinyAsciiStr<32> = tinystr!(32, "Socket").concat(NOT_INITED);
+        let fmt: TinyAsciiStr<TINY_STR_STACK> = tinystr!(32, "Socket: ").concat(NOT_INITED);
         let fmt = fmt.as_str();
         match *self {
             Socket::Local => LOCAL_SOCKET.get().expect(fmt),
@@ -105,7 +105,7 @@ impl Sockets {
     }
 
     pub fn convert(self) -> Result<()> {
-        let fmt: TinyAsciiStr<32> = tinystr!(32, "Sockets::convert()").concat(ONCE);
+        let fmt: TinyAsciiStr<TINY_STR_STACK> = tinystr!(32, "Sockets::convert(): ").concat(ONCE);
         let fmt = fmt.as_str();
         LOCAL_SOCKET
             .set(UdpSocket::from_std(self.local)?)
