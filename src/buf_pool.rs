@@ -13,7 +13,8 @@ use log_limit::warn_limit_global;
 use tokio::sync::{OnceCell, Semaphore as SP, SemaphorePermit, TryAcquireError};
 use wide::u64x8;
 
-use crate::{INIT, WARN_LIMIT_DUR, buf_pool::sealed::BpSealed, concat_let};
+use self::sealed::BpSealed;
+use crate::{INIT, WARN_LIMIT_DUR, concat_let};
 
 static POOL_SEM: SP = SP::const_new(0);
 
