@@ -41,7 +41,6 @@ mod bench {
 
     use test::Bencher;
 
-    use super::xor;
     use crate::{K, buf_pool::AlignBox};
 
     const TEST_ITER: usize = K;
@@ -49,16 +48,31 @@ mod bench {
     const N: usize = 16 * K;
     const TOKEN: u8 = 0xFF;
 
+    #[inline(always)]
+    fn bench(ptr: *mut u8, xor: fn(*mut u8, usize, u8)) {
+        use std::{
+            hint,
+            sync::{atomic, atomic::Ordering},
+        };
+        // pin LLVM optimization path to prevent cross-call folding
+        let pin = || {
+            hint::black_box(ptr);
+            atomic::compiler_fence(Ordering::SeqCst);
+        };
+        (0..TEST_ITER).for_each(|_| {
+            xor(ptr, N, TOKEN);
+            pin();
+            xor(ptr, N, TOKEN);
+            pin();
+        })
+    }
+
     #[bench]
     fn simd(b: &mut Bencher) {
+        use super::xor;
         let mut data = AlignBox::new(N);
         let ptr = data.as_mut_ptr();
-        b.iter(|| {
-            (0..TEST_ITER).for_each(|_| {
-                xor(ptr, N, TOKEN);
-                xor(ptr, N, TOKEN);
-            });
-        });
+        b.iter(|| bench(ptr, xor));
     }
 
     #[bench]
@@ -71,11 +85,6 @@ mod bench {
         }
         let mut data = unsafe { Box::new_zeroed_slice(N).assume_init() };
         let ptr: *mut u8 = data.as_mut_ptr();
-        b.iter(|| {
-            (0..TEST_ITER).for_each(|_| {
-                xor(ptr, N, TOKEN);
-                xor(ptr, N, TOKEN);
-            });
-        });
+        b.iter(|| bench(ptr, xor));
     }
 }
