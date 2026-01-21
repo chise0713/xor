@@ -1,5 +1,6 @@
 use std::{
     alloc::{self, Layout},
+    mem::ManuallyDrop,
     ops::{Deref, DerefMut},
     ptr::NonNull,
     slice,
@@ -105,16 +106,14 @@ impl BufPool {
         let buf = BpSealed.pop().expect("semaphore permits mismatch!");
 
         Some(LeasedBuf {
-            inner: Some(buf),
+            inner: ManuallyDrop::new(buf),
             _p,
         })
     }
 }
 
 pub struct LeasedBuf {
-    // AlignBox is too large,
-    // Option<T> is just for take
-    inner: Option<AlignBox>,
+    inner: ManuallyDrop<AlignBox>,
     _p: SemaphorePermit<'static>,
 }
 
@@ -123,23 +122,21 @@ impl Deref for LeasedBuf {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        self.inner.as_deref().unwrap()
+        &self.inner
     }
 }
 
 impl DerefMut for LeasedBuf {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner.as_deref_mut().unwrap()
+        &mut self.inner
     }
 }
 
 impl Drop for LeasedBuf {
     fn drop(&mut self) {
-        BpSealed
-            .push(self.inner.take().unwrap())
-            .ok()
-            .expect(PUSH_FAILURE);
+        let buf = unsafe { ManuallyDrop::take(&mut self.inner) };
+        BpSealed.push(buf).ok().expect(PUSH_FAILURE);
     }
 }
 
