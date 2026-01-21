@@ -1,0 +1,32 @@
+name: Benchmark xor implementation
+
+on:
+  push:
+    paths:
+      - ".github/workflows/bench.yml"
+
+jobs:
+  bench:
+    name: Bench
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        with:
+          fetch-depth: 1
+      - name: Install Rust nightly toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: nightly
+      - name: Cache cargo registry, index, and targets
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          prefix-key: "cargo-bench"
+      - name: Run benchmarks
+        run: |
+          echo -e "### Benchmark results\n" '```console' >> $GITHUB_STEP_SUMMARY
+          RUSTFLAGS="-Ctarget-cpu=native" cargo +nightly \
+            bench --locked --features bench --verbose \
+            >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        shell: bash

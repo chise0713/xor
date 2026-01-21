@@ -13,7 +13,7 @@ use coarsetime::Instant;
 use log::info;
 use parking_lot::RwLock;
 
-use crate::{INIT, ONCE, concat_let};
+use crate::{INIT, K, ONCE, concat_let};
 
 pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
@@ -100,7 +100,6 @@ impl LastSeen {
         )
     }
 }
-use crate::K;
 
 pub struct WatchDog;
 
