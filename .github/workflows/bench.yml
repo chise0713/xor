@@ -3,7 +3,13 @@ name: Benchmark xor implementation
 on:
   push:
     paths:
+      - "**/*.rs"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/bench.yml"
+    branches:
+      - "**"
+  pull_request:
 
 jobs:
   bench:
