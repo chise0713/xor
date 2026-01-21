@@ -23,13 +23,12 @@ use log_limit::warn_limit_global;
 use tokio::{
     runtime::Builder,
     signal,
-    sync::{SemaphorePermit, TryAcquireError},
     task::{JoinSet, LocalSet},
 };
 
 use crate::{
     args::{Args, Parse as _, Usage as _},
-    buf_pool::{AlignBox, BufPool, Semaphore},
+    buf_pool::{BufPool, LeasedBuf},
     local::{ConnectCtx, LastSeen, LocalAddr, Started, WatchDog},
     logger::Logger,
     shutdown::Shutdown,
@@ -75,6 +74,8 @@ const M: usize = K.pow(2); // 1024 * 1024
 
 const DEFAULT_MTU: usize = 1500;
 const DEFAULT_BUFFER_LIMIT: usize = 48;
+
+const CORASETIME_UPDATE: u64 = 100;
 
 const WARN_LIMIT_DUR: Duration = Duration::from_millis(250);
 
@@ -142,7 +143,7 @@ fn main() -> Result<ExitCode> {
         .build()?;
 
     let sockets = Sockets::new(&listen_address, &remote_address)?;
-    BgClock::new(50).start()?;
+    BgClock::new(CORASETIME_UPDATE).start()?;
     WatchDog::init(timeout)?;
     BufPool::init(limit, payload_max)?;
     Logger::init();
@@ -213,22 +214,7 @@ impl AsyncMain {
 }
 
 #[inline(always)]
-fn try_push(buf: AlignBox) {
-    if BufPool.push(buf).is_err() {
-        error!("failed to push buf back");
-        Shutdown::request();
-    }
-}
-
-#[inline(always)]
-fn send(
-    mut buf: AlignBox,
-    n: usize,
-    token: u8,
-    socket: Socket,
-    is_local: bool,
-    _p: SemaphorePermit<'_>,
-) {
+fn send(mut buf: LeasedBuf, n: usize, token: u8, socket: Socket, is_local: bool) {
     if token != 0 {
         xor(buf.as_mut_ptr(), n, token);
     };
@@ -253,36 +239,19 @@ fn send(
                 error!("{e}");
             }
         }
-    }
-
-    try_push(buf);
+    };
 }
 
 async fn recv(token: u8, socket: Socket) {
     let is_local = matches!(socket, Socket::Local);
     while !Shutdown::requested() {
-        let _p = match Semaphore.try_acquire() {
-            Ok(_p) => _p,
-            Err(TryAcquireError::Closed) => {
-                break;
-            }
-            Err(TryAcquireError::NoPermits) => {
-                warn_limit_global!(1, WARN_LIMIT_DUR, "semaphore backpressure");
-                Semaphore.acquire().await.unwrap()
-            }
-        };
-
-        let Some(mut buf) = BufPool.pop() else {
-            let mut trashing = [0u8];
-            let _ = socket.recv_from(&mut trashing).await;
-            warn_limit_global!(1, WARN_LIMIT_DUR, "buf_pool is empty, dropping packet");
-            continue;
+        let Some(mut buf) = BufPool::acquire().await else {
+            break;
         };
 
         let (n, addr) = match socket.recv_from(buf.as_mut()).await {
             Ok(v) => v,
             Err(e) => {
-                try_push(buf);
                 error!("{e}");
                 break;
             }
@@ -304,11 +273,10 @@ async fn recv(token: u8, socket: Socket) {
                     WARN_LIMIT_DUR,
                     "cached={local_addr}, current={addr}, dropping"
                 );
-                try_push(buf);
                 continue;
             }
         }
 
-        send(buf, n, token, !socket, !is_local, _p);
+        send(buf, n, token, !socket, !is_local);
     }
 }
