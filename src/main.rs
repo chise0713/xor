@@ -144,7 +144,7 @@ fn main() -> Result<ExitCode> {
 
     let sockets = Sockets::new(&listen_address, &remote_address)?;
     BgClock::new(CORASETIME_UPDATE).start()?;
-    WatchDog::init(timeout)?;
+    WatchDog::start(timeout)?;
     BufPool::init(limit, payload_max)?;
     Logger::init();
     Started::now();

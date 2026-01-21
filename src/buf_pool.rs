@@ -120,12 +120,15 @@ pub struct LeasedBuf {
 
 impl Deref for LeasedBuf {
     type Target = [u8];
+
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         self.inner.as_deref().unwrap()
     }
 }
 
 impl DerefMut for LeasedBuf {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner.as_deref_mut().unwrap()
     }

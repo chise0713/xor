@@ -104,7 +104,7 @@ impl LastSeen {
 pub struct WatchDog;
 
 impl WatchDog {
-    pub fn init(timeout: f64) -> Result<()> {
+    pub fn start(timeout: f64) -> Result<()> {
         thread::Builder::new()
             .name("clnt-wdog".to_string())
             .stack_size(16 * K)
