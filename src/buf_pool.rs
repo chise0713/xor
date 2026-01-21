@@ -25,7 +25,7 @@ struct Inner {
 }
 
 #[repr(transparent)]
-struct AlignBox {
+pub struct AlignBox {
     inner: CachePadded<Inner>,
 }
 
@@ -34,7 +34,7 @@ pub const CACHELINE_ALIGN: usize = size_of::<AlignBox>();
 unsafe impl Send for AlignBox {}
 
 impl AlignBox {
-    fn new(size: usize) -> Self {
+    pub fn new(size: usize) -> Self {
         let align_size = CACHELINE_ALIGN.max(SIMD_WIDTH);
         let padded_len = size.div_ceil(SIMD_WIDTH) * SIMD_WIDTH;
         let layout = Layout::from_size_align(padded_len, align_size).unwrap();
