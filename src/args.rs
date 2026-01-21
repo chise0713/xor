@@ -10,7 +10,7 @@ pub struct Args {
     #[arg(flag = 'r', help = "remote address")]
     pub remote_address: Option<Box<str>>,
     #[arg(flag = 'o', help = "client timeout in seconds")]
-    pub time_out_f64_secs: Option<f64>,
+    pub timeout_f64_secs: Option<f64>,
     #[arg(flag = 't', help = "e.g. 0xFF")]
     pub token_hex_u8: Option<Box<str>>,
 }

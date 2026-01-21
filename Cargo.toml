@@ -1,6 +1,6 @@
 [package]
 name = "xor"
-version = "0.1.24"
+version = "0.1.25"
 edition = "2024"
 
 [features]
@@ -28,7 +28,6 @@ tokio = { version = "^1.49", default-features = false, features = [
     "rt-multi-thread",
     "signal",
     "sync",
-    "time",
 ] }
 wide = "^1.1"
 

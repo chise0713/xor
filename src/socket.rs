@@ -9,7 +9,7 @@ use anyhow::Result;
 use socket2::{Domain, Protocol, Type};
 use tokio::net::UdpSocket;
 
-use crate::{INIT, M, ONCE, static_concat};
+use crate::{INIT, M, ONCE, concat_let};
 
 const RECV_BUF_SIZE: usize = 32 * M;
 const SEND_BUF_SIZE: usize = RECV_BUF_SIZE;
@@ -28,10 +28,10 @@ impl Deref for Socket {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        static_concat!(CTX = "Socket: " + INIT);
+        concat_let!(ctx = "Socket: " + INIT);
         match *self {
-            Socket::Local => LOCAL_SOCKET.get().expect(&CTX),
-            Socket::Remote => REMOTE_SOCKET.get().expect(&CTX),
+            Socket::Local => LOCAL_SOCKET.get().expect(&ctx),
+            Socket::Remote => REMOTE_SOCKET.get().expect(&ctx),
         }
     }
 }
@@ -103,13 +103,13 @@ impl Sockets {
     }
 
     pub fn convert(self) -> Result<()> {
-        static_concat!(CTX = "Sockets::convert(): " + ONCE);
+        concat_let!(ctx = "Socket::convert(): " + ONCE);
         LOCAL_SOCKET
             .set(UdpSocket::from_std(self.local)?)
-            .expect(&CTX);
+            .expect(&ctx);
         REMOTE_SOCKET
             .set(UdpSocket::from_std(self.remote)?)
-            .expect(&CTX);
+            .expect(&ctx);
         Ok(())
     }
 }

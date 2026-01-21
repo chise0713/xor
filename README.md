@@ -3,7 +3,7 @@
 ## Usage
 ```console
 usage: xor [-h] [-b buffer_limit_usize] [-l listen_address]
-           [-m mtu_usize] [-o time_out_f64_secs]
+           [-m mtu_usize] [-o timeout_f64_secs]
            [-r remote_address] [-t token_hex_u8]
 ```
 ## Example

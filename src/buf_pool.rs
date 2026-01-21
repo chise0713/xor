@@ -11,7 +11,7 @@ use crossbeam_utils::CachePadded;
 use tokio::sync::{OnceCell, Semaphore as SP};
 use wide::u64x8;
 
-use crate::{INIT, static_concat};
+use crate::{INIT, concat_let};
 
 static POOL_SEM: SP = SP::const_new(0);
 
@@ -95,8 +95,8 @@ impl Deref for BufPool {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        static_concat!(CTX = "BufPool" + INIT);
-        BUF_POOL.get().expect(&CTX)
+        concat_let!(ctx = "BufPool: " + INIT);
+        BUF_POOL.get().expect(&ctx)
     }
 }
 

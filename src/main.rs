@@ -17,6 +17,7 @@ use std::{
 };
 
 use anyhow::Result;
+use coarsetime::Updater as BgClock;
 use log::{Level, error, info, log_enabled, trace};
 use log_limit::warn_limit_global;
 use tokio::{
@@ -24,23 +25,21 @@ use tokio::{
     signal,
     sync::{SemaphorePermit, TryAcquireError},
     task::{JoinSet, LocalSet},
-    time,
 };
 
 use crate::{
     args::{Args, Parse as _, Usage as _},
     buf_pool::{AlignBox, BufPool, Semaphore},
-    local::{ConnectCtx, LastSeen, LocalAddr, Started},
+    local::{ConnectCtx, LastSeen, LocalAddr, Started, WatchDog},
     logger::Logger,
     shutdown::Shutdown,
     socket::{Socket, Sockets},
     xor::xor,
 };
 
-#[macro_export]
-macro_rules! static_tinystr {
+macro_rules! tinystr_const {
     ($name:ident, $str:literal) => {
-        static $name: ::tinystr::TinyAsciiStr<{ $str.len() }> = {
+        const $name: ::tinystr::TinyAsciiStr<{ $str.len() }> = {
             match ::tinystr::TinyAsciiStr::try_from_str($str) {
                 Ok(s) => s,
                 Err(_) => panic!(concat!("failed to construct tinystr from \"", $str, "\"")),
@@ -49,15 +48,19 @@ macro_rules! static_tinystr {
     };
 }
 
-static_tinystr!(ONCE, "called once before");
-static_tinystr!(INIT, "not initialzed before");
+tinystr_const!(ONCE, "called once before");
+tinystr_const!(INIT, "not initialzed before");
 
 #[macro_export]
-macro_rules! static_concat {
-    ($vis:vis $name:ident = $str:literal + $suffix:ident) => {
-        $vis static $name: ::tinystr::TinyAsciiStr<48> = {
-            $crate::static_tinystr!(TEMP, $str);
-            TEMP.concat($suffix)
+macro_rules! concat_let {
+    ($name:ident = $prefix:literal + $suffix:expr) => {
+        let $name: ::tinystr::TinyAsciiStr<{ $prefix.len() + $suffix.len() }> = {
+            let base: ::tinystr::TinyAsciiStr<{ $prefix.len() }> =
+                match ::tinystr::TinyAsciiStr::try_from_str($prefix) {
+                    Ok(s) => s,
+                    Err(_) => panic!(),
+                };
+            base.concat($suffix)
         };
     };
 }
@@ -67,8 +70,11 @@ const UDP_HEADER: usize = 8;
 const IPV6_HEADER: usize = 40;
 const LINK_PAYLOAD_OFFSET: usize = UDP_HEADER + IPV6_HEADER;
 
-const K: usize = 2usize.pow(10);
-const M: usize = K.pow(2);
+const K: usize = 2usize.pow(10); // 1024
+const M: usize = K.pow(2); // 1024 * 1024
+
+const DEFAULT_MTU: usize = 1500;
+const DEFAULT_BUFFER_LIMIT: usize = 48;
 
 const WARN_LIMIT_DUR: Duration = Duration::from_millis(250);
 
@@ -78,7 +84,7 @@ fn main() -> Result<ExitCode> {
         listen_address,
         mtu_usize,
         remote_address,
-        time_out_f64_secs,
+        timeout_f64_secs,
         token_hex_u8,
     } = match Args::parse() {
         Ok(v) => v,
@@ -96,8 +102,8 @@ fn main() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     };
 
-    let time_out = time_out_f64_secs.unwrap_or(5.);
-    if time_out == 0. {
+    let timeout = timeout_f64_secs.unwrap_or(5.);
+    if timeout == 0. {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     }
@@ -110,14 +116,14 @@ fn main() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     };
 
-    let mtu = mtu_usize.unwrap_or(16384 + LINK_PAYLOAD_OFFSET);
+    let mtu = mtu_usize.unwrap_or(DEFAULT_MTU);
     if mtu > LINK_MTU_MAX {
         Args::usage();
         return Ok(ExitCode::FAILURE);
     }
 
     let payload_max = mtu - LINK_PAYLOAD_OFFSET;
-    let limit = buffer_limit_usize.unwrap_or(K);
+    let limit = buffer_limit_usize.unwrap_or(DEFAULT_BUFFER_LIMIT);
 
     const MAIN_THREAD: usize = 1;
     let worker_threads = thread::available_parallelism()?
@@ -136,14 +142,14 @@ fn main() -> Result<ExitCode> {
         .build()?;
 
     let sockets = Sockets::new(&listen_address, &remote_address)?;
-    coarsetime::Updater::new(50).start()?;
+    BgClock::new(50).start()?;
+    WatchDog::init(timeout)?;
     BufPool::init(limit, payload_max)?;
     Logger::init();
     Started::now();
 
     rt.block_on(
         AsyncMain {
-            time_out,
             token,
             sockets,
             worker_threads,
@@ -155,7 +161,6 @@ fn main() -> Result<ExitCode> {
 static N: AtomicUsize = AtomicUsize::new(0);
 
 struct AsyncMain {
-    time_out: f64,
     token: u8,
     sockets: Sockets,
     worker_threads: usize,
@@ -185,9 +190,6 @@ impl AsyncMain {
                 Shutdown::request();
                 exit_code = ExitCode::SUCCESS;
             },
-            _ = watch_dog(self.time_out) => {
-                error!("the watch dog exited prematurely");
-            },
             _ = join_set.join_next() => {
                 net_fail = true;
             },
@@ -207,27 +209,6 @@ impl AsyncMain {
         }
 
         Ok(exit_code)
-    }
-}
-
-#[inline(always)]
-async fn watch_dog(time_out: f64) {
-    let timeout_dur = Duration::from_secs_f64(time_out);
-    let sleep_dur = Duration::from_secs_f64(time_out);
-
-    loop {
-        time::sleep(sleep_dur).await;
-        if !ConnectCtx::is_connected() {
-            continue;
-        }
-
-        if LastSeen::elapsed() < timeout_dur {
-            continue;
-        }
-
-        let addr = LocalAddr::current();
-        ConnectCtx::disconnect();
-        info!("client timeout {addr}");
     }
 }
 

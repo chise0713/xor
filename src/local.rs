@@ -4,14 +4,16 @@ use std::{
         OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    thread,
     time::Duration,
 };
 
+use anyhow::Result;
 use coarsetime::Instant;
 use log::info;
 use parking_lot::RwLock;
 
-use crate::{INIT, static_concat};
+use crate::{INIT, ONCE, concat_let};
 
 pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
@@ -69,14 +71,14 @@ pub struct Started;
 impl Started {
     #[inline(always)]
     pub fn now() {
-        static_concat!(CTX = "Socket::now(): " + INIT);
-        START.set(Instant::now()).expect(&CTX)
+        concat_let!(ctx = "Socket::now(): " + ONCE);
+        START.set(Instant::now()).expect(&ctx)
     }
 
     #[inline(always)]
     fn at() -> Instant {
-        static_concat!(CTX = "Socket::at(): " + INIT);
-        *START.get().expect(&CTX)
+        concat_let!(ctx = "Socket::at(): " + INIT);
+        *START.get().expect(&ctx)
     }
 }
 
@@ -96,5 +98,39 @@ impl LastSeen {
                 .as_millis()
                 .saturating_sub(LAST_SEEN.load(Ordering::Relaxed)),
         )
+    }
+}
+use crate::K;
+
+pub struct WatchDog;
+
+impl WatchDog {
+    pub fn init(timeout: f64) -> Result<()> {
+        thread::Builder::new()
+            .name("clnt-wdog".to_string())
+            .stack_size(16 * K)
+            .spawn(move || watchdog(timeout))?;
+        Ok(())
+    }
+}
+
+#[inline(always)]
+fn watchdog(timeout: f64) {
+    let timeout_dur = Duration::from_secs_f64(timeout);
+    let sleep_dur = Duration::from_secs_f64(timeout);
+
+    loop {
+        thread::sleep(sleep_dur);
+        if !ConnectCtx::is_connected() {
+            continue;
+        }
+
+        if LastSeen::elapsed() < timeout_dur {
+            continue;
+        }
+
+        let addr = LocalAddr::current();
+        ConnectCtx::disconnect();
+        info!("client timeout {addr}");
     }
 }
