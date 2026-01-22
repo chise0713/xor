@@ -4,16 +4,36 @@
 ```console
 usage: xor [-h] [-b buffer_limit_usize] [-l listen_address]
            [-m mtu_usize] [-o timeout_f64_secs]
-           [-r remote_address] [-t token_hex_u8]
+           [-r remote_address] [-s set_method] [-t token_hex_u8]
+Command Summary:
+        -b              for total pre-allocated buffer
+        -h              prints this help message
+        -l              listen address
+        -m              for link mtu
+        -o              client timeout in seconds
+        -r              remote address
+        -s              one of: `xor`, `dns`. defaults to `xor`
+        -t              e.g. 0xFF
 ```
 ## Example
-local:
+### XOR
+- local:
 ```console
-xor -b2048 -l127.0.0.1:51820 -m1492 -o2 -r place.holder.local.arpa:65535 -t0xFF
+xor -b64 -l127.0.0.1:51820 -m1492 -o2 -r place.holder.local.arpa:65535 -t0xFF
 ```
-remote:
+- remote:
 ```console
-xor -b2048 -l[::]:65535 -m1492 -o2 -r127.0.0.1:51820 -t0xFF
+xor -b64 -l[::]:65535 -m1492 -o2 -r127.0.0.1:51820 -t0xFF
+```
+
+### Padding DNS Query
+- local:
+```console
+xor -b64 -l127.0.0.1:51820 -m1492 -o2 -r place.holder.local.arpa:65535 -sdnspad
+```
+- remote:
+```console
+xor -b64 -l[::]:65535 -m1492 -o2 -r127.0.0.1:51820 -sdnsunpad
 ```
 
 ## License
