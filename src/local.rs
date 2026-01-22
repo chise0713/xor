@@ -16,7 +16,7 @@ use parking_lot::{Once, OnceState, RwLock};
 
 use crate::{INIT, K, ONCE, concat_let};
 
-pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
+const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
 static LOCAL_ADDR: RwLock<SocketAddr> = RwLock::new(NULL_SOCKET_ADDR);
 
@@ -106,7 +106,7 @@ impl LastSeen {
     }
 
     #[inline(always)]
-    pub fn elapsed() -> Duration {
+    fn elapsed() -> Duration {
         Duration::from_millis(
             Started::at()
                 .elapsed()
