@@ -150,7 +150,9 @@ mod sealed {
 
         #[inline(always)]
         fn deref(&self) -> &Self::Target {
-            concat_let!(ctx = "BufPool: " + INIT);
+            concat_let! {
+                ctx = "BufPool: " + INIT
+            };
             BUF_POOL.get().expect(&ctx)
         }
     }

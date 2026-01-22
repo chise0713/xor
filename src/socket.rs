@@ -28,7 +28,9 @@ impl Deref for Socket {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        concat_let!(ctx = "Socket: " + INIT);
+        concat_let! {
+            ctx = "Socket: " + INIT
+        };
         match *self {
             Socket::Local => LOCAL_SOCKET.get().expect(&ctx),
             Socket::Remote => REMOTE_SOCKET.get().expect(&ctx),
@@ -102,7 +104,9 @@ impl Sockets {
     }
 
     pub fn convert(self) -> Result<()> {
-        concat_let!(ctx = "Socket::convert(): " + ONCE);
+        concat_let! {
+            ctx = "Socket::convert(): " + ONCE
+        };
         LOCAL_SOCKET
             .set(UdpSocket::from_std(self.local)?)
             .expect(&ctx);

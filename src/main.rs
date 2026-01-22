@@ -10,6 +10,7 @@ mod xor;
 
 use std::{
     io::ErrorKind,
+    net::SocketAddr,
     process::ExitCode,
     sync::atomic::{AtomicUsize, Ordering},
     thread,
@@ -37,29 +38,39 @@ use crate::{
 };
 
 macro_rules! tinystr_const {
-    ($name:ident, $str:literal) => {
-        const $name: ::tinystr::TinyAsciiStr<{ $str.len() }> = {
-            match ::tinystr::TinyAsciiStr::try_from_str($str) {
-                Ok(s) => s,
-                Err(_) => panic!(concat!("failed to construct tinystr from \"", $str, "\"")),
-            }
-        };
-    };
+    { $($name:ident = $str:literal),* $(,)? } => {
+        $(
+            const $name: ::tinystr::TinyAsciiStr<{ $str.len() }> = {
+                match ::tinystr::TinyAsciiStr::try_from_str($str) {
+                    Ok(s) => s,
+                    Err(_) => panic!(concat!("failed to construct tinystr from \"", $str, "\"")),
+                }
+            };
+        )*
+    }
 }
 
-tinystr_const!(ONCE, "called once before");
-tinystr_const!(INIT, "not initialzed before");
+tinystr_const! {
+    ONCE = "called once before",
+    INIT = "not initialzed before"
+}
 
 #[macro_export]
 macro_rules! concat_let {
     ($name:ident = $prefix:literal + $suffix:expr) => {
         let $name: ::tinystr::TinyAsciiStr<{ $prefix.len() + $suffix.len() }> = {
+            // compile-time `$suffix` to avoid runtime computation
+            const SUFFIX: ::tinystr::TinyAsciiStr<{ $suffix.len() }> = $suffix;
             let base: ::tinystr::TinyAsciiStr<{ $prefix.len() }> =
                 match ::tinystr::TinyAsciiStr::try_from_str($prefix) {
                     Ok(s) => s,
-                    Err(_) => panic!(),
+                    Err(_) => panic!(concat!(
+                        "failed to construct tinystr from \"",
+                        $prefix,
+                        "\""
+                    )),
                 };
-            base.concat($suffix)
+            base.concat(SUFFIX)
         };
     };
 }
@@ -76,6 +87,7 @@ const DEFAULT_MTU: usize = 1500;
 const DEFAULT_BUFFER_LIMIT: usize = 48;
 
 const CORASETIME_UPDATE: u64 = 100;
+const WORKER_STACK_SIZE: usize = 256 * K;
 
 const WARN_LIMIT_DUR: Duration = Duration::from_millis(250);
 
@@ -103,7 +115,7 @@ fn main() -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     };
 
-    let timeout = timeout_f64_secs.unwrap_or(5.);
+    let timeout = timeout_f64_secs.unwrap_or(5.).max(0.5);
     if timeout == 0. {
         Args::usage();
         return Ok(ExitCode::FAILURE);
@@ -133,7 +145,7 @@ fn main() -> Result<ExitCode> {
         .max(1);
     let rt = Builder::new_multi_thread()
         .enable_all()
-        .thread_stack_size(256 * K)
+        .thread_stack_size(WORKER_STACK_SIZE)
         .thread_name_fn(|| {
             static ID: AtomicUsize = AtomicUsize::new(0);
             let id = ID.fetch_add(1, Ordering::SeqCst);
@@ -213,15 +225,13 @@ impl AsyncMain {
     }
 }
 
-#[inline(always)]
 fn send(mut buf: LeasedBuf, n: usize, token: u8, socket: Socket, is_local: bool) {
     if token != 0 {
         xor(buf.as_mut_ptr(), n, token);
     };
 
     let result = if is_local {
-        let addr = LocalAddr::current();
-        socket.try_send_to(&buf[..n], addr)
+        socket.try_send_to(&buf[..n], LocalAddr::current())
     } else {
         socket.try_send(&buf[..n])
     };
@@ -260,23 +270,44 @@ async fn recv(token: u8, socket: Socket) {
             N.fetch_max(n, Ordering::Relaxed);
         }
 
-        if is_local {
-            let connected = ConnectCtx::is_connected();
-            let local_addr = LocalAddr::current();
-            if connected && addr == local_addr {
-                LastSeen::now();
-            } else if !connected {
-                ConnectCtx::connect(addr);
-            } else {
-                warn_limit_global!(
-                    1,
-                    WARN_LIMIT_DUR,
-                    "cached={local_addr}, current={addr}, dropping"
-                );
-                continue;
-            }
-        }
+        if let DoLoop::Yes = local_addtional_handle(is_local, addr) {
+            warn_limit_global!(1, WARN_LIMIT_DUR, "client not connected");
+            continue;
+        };
 
         send(buf, n, token, !socket, !is_local);
     }
+}
+
+#[repr(u8)]
+enum DoLoop {
+    Yes,
+    No,
+}
+
+#[inline(never)]
+#[must_use]
+fn local_addtional_handle(is_local: bool, addr: SocketAddr) -> DoLoop {
+    if !is_local {
+        return DoLoop::No;
+    }
+
+    if !ConnectCtx::is_connected() {
+        ConnectCtx::connect(addr);
+    } else {
+        let local_addr = LocalAddr::current();
+
+        if addr == local_addr {
+            LastSeen::now();
+        } else {
+            warn_limit_global!(
+                1,
+                WARN_LIMIT_DUR,
+                "local={local_addr}, current={addr}, dropping"
+            );
+            return DoLoop::Yes;
+        }
+    }
+
+    DoLoop::No
 }
