@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::OnceLock};
+use std::{fmt::Display, str::FromStr, sync::OnceLock};
 
 use anyhow::bail;
 
@@ -23,12 +23,22 @@ fn align_check(ptr: usize) {
 }
 
 #[repr(u8)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub enum Method {
     #[default]
     Xor,
     DnsPad,
     DnsUnPad,
+}
+
+impl Method {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Method::Xor => "xor",
+            Method::DnsPad => "dnspad",
+            Method::DnsUnPad => "dnsunpad",
+        }
+    }
 }
 
 impl FromStr for Method {
@@ -41,6 +51,12 @@ impl FromStr for Method {
             "dnsunpad" => Ok(Method::DnsUnPad),
             _ => bail!("unknown method: {s}"),
         }
+    }
+}
+
+impl Display for Method {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

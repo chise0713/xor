@@ -33,7 +33,7 @@ use crate::{
     buf_pool::{BufPool, LeasedBuf},
     local::{ConnectCtx, LastSeen, LocalAddr, Started, WatchDog},
     logger::Logger,
-    methods::{Method, MethodState, XorToken},
+    methods::{DNS_QUERY_LEN, Method, MethodState, XorToken},
     shutdown::Shutdown,
     socket::{Socket, Sockets},
 };
@@ -134,7 +134,7 @@ fn main() -> Result<ExitCode> {
         }
     };
 
-    match method {
+    let payload_max = match method {
         Method::Xor => {
             let Some(token) = token_hex_u8.and_then(|t| {
                 t.strip_prefix("0x")
@@ -143,15 +143,17 @@ fn main() -> Result<ExitCode> {
                 return args::invalid_argument();
             };
             XorToken::set(token)?;
+            payload_max
         }
 
         Method::DnsPad => {
             if !methods::bound_check(payload_max) {
                 return args::invalid_argument();
             }
+            payload_max + DNS_QUERY_LEN
         }
 
-        Method::DnsUnPad => {}
+        Method::DnsUnPad => payload_max,
     };
     MethodState::set(method);
 
@@ -163,10 +165,10 @@ fn main() -> Result<ExitCode> {
     let rt = Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(WORKER_STACK_SIZE)
-        .thread_name_fn(|| {
+        .thread_name_fn(move || {
             static ID: AtomicUsize = AtomicUsize::new(0);
             let id = ID.fetch_add(1, Ordering::SeqCst);
-            format!("xor-{}", id)
+            format!("{method}-{}", id)
         })
         .worker_threads(worker_threads)
         .build()?;
