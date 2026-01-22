@@ -1,5 +1,6 @@
 use std::{
     fmt::Display,
+    io,
     net::{SocketAddr, UdpSocket as StdUdpSocket},
     ops::{Deref, Not},
     sync::OnceLock,
@@ -9,7 +10,7 @@ use anyhow::Result;
 use socket2::{Domain, Protocol, Type};
 use tokio::net::UdpSocket;
 
-use crate::{INIT, M, ONCE, concat_let};
+use crate::{INIT, M, ONCE, concat_let, local::LocalAddr};
 
 const RECV_BUF_SIZE: usize = 32 * M;
 const SEND_BUF_SIZE: usize = RECV_BUF_SIZE;
@@ -21,6 +22,21 @@ static REMOTE_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
 pub enum Socket {
     Local,
     Remote,
+}
+
+impl Socket {
+    #[inline(always)]
+    pub fn is_local(&self) -> bool {
+        matches!(*self, Self::Local)
+    }
+
+    #[inline(always)]
+    pub fn send(&self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Socket::Local => self.try_send_to(buf, LocalAddr::current()),
+            Socket::Remote => self.try_send(buf),
+        }
+    }
 }
 
 impl Deref for Socket {
@@ -107,12 +123,10 @@ impl Sockets {
         concat_let! {
             ctx = "Socket::convert(): " + ONCE
         };
-        LOCAL_SOCKET
-            .set(UdpSocket::from_std(self.local)?)
-            .expect(&ctx);
-        REMOTE_SOCKET
-            .set(UdpSocket::from_std(self.remote)?)
-            .expect(&ctx);
+        let l = LOCAL_SOCKET.set(UdpSocket::from_std(self.local)?);
+        let r = REMOTE_SOCKET.set(UdpSocket::from_std(self.remote)?);
+        l.expect(&ctx);
+        r.expect(&ctx);
         Ok(())
     }
 }

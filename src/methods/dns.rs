@@ -97,7 +97,8 @@ pub const DNS_QUERY: [u8; DNS_QUERY_LEN] = {
     buf
 };
 
-pub fn bound_check(payload_max: usize) -> bool {
+#[must_use]
+pub fn dns_payload_bound_check(payload_max: usize) -> bool {
     payload_max > DNS_QUERY_LEN
 }
 

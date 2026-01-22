@@ -17,7 +17,10 @@ pub struct Args {
     pub timeout_f64_secs: Option<f64>,
     #[arg(flag = 't', help = "e.g. 0xFF")]
     pub token_hex_u8: Option<Box<str>>,
-    #[arg(flag = 's', help = "one of: `xor`, `dns`. defaults to `xor`")]
+    #[arg(
+        flag = 's',
+        help = "one of: `xor`, `dnspad`, `dnsunpad`; defaults to `xor`"
+    )]
     pub set_method: Option<Box<str>>,
 }
 

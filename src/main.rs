@@ -5,12 +5,12 @@ mod buf_pool;
 mod local;
 mod logger;
 mod methods;
+mod recv_send;
 mod shutdown;
 mod socket;
 
 use std::{
-    io::ErrorKind,
-    net::SocketAddr,
+    num::NonZero,
     process::ExitCode,
     str::FromStr as _,
     sync::atomic::{AtomicUsize, Ordering},
@@ -21,7 +21,6 @@ use std::{
 use anyhow::Result;
 use coarsetime::Updater as BgClock;
 use log::{Level, error, info, log_enabled, trace};
-use log_limit::warn_limit_global;
 use tokio::{
     runtime::Builder,
     signal,
@@ -29,11 +28,12 @@ use tokio::{
 };
 
 use crate::{
-    args::{Args, Parse as _, Usage as _},
-    buf_pool::{BufPool, LeasedBuf},
-    local::{ConnectCtx, LastSeen, LocalAddr, Started, WatchDog},
+    args::{Args, Parse as _},
+    buf_pool::BufPool,
+    local::{Started, WatchDog},
     logger::Logger,
     methods::{DNS_QUERY_LEN, Method, MethodState, XorToken},
+    recv_send::RecvSend,
     shutdown::Shutdown,
     socket::{Socket, Sockets},
 };
@@ -60,9 +60,9 @@ tinystr_const! {
 macro_rules! concat_let {
     ($name:ident = $prefix:literal + $suffix:expr) => {
         let $name: ::tinystr::TinyAsciiStr<{ $prefix.len() + $suffix.len() }> = {
-            // compile-time `$suffix` to avoid runtime computation
+            // all as `const` to avoid runtime computation
             const SUFFIX: ::tinystr::TinyAsciiStr<{ $suffix.len() }> = $suffix;
-            let base: ::tinystr::TinyAsciiStr<{ $prefix.len() }> =
+            const BASE: ::tinystr::TinyAsciiStr<{ $prefix.len() }> =
                 match ::tinystr::TinyAsciiStr::try_from_str($prefix) {
                     Ok(s) => s,
                     Err(_) => panic!(concat!(
@@ -71,7 +71,7 @@ macro_rules! concat_let {
                         "\""
                     )),
                 };
-            base.concat(SUFFIX)
+            BASE.concat(SUFFIX)
         };
     };
 }
@@ -109,11 +109,9 @@ fn main() -> Result<ExitCode> {
     };
 
     let Some(listen_address) = listen_address else {
-        Args::usage();
         return args::invalid_argument();
     };
     let Some(remote_address) = remote_address else {
-        Args::usage();
         return args::invalid_argument();
     };
 
@@ -147,7 +145,7 @@ fn main() -> Result<ExitCode> {
         }
 
         Method::DnsPad => {
-            if !methods::bound_check(payload_max) {
+            if !methods::dns_payload_bound_check(payload_max) {
                 return args::invalid_argument();
             }
             payload_max + DNS_QUERY_LEN
@@ -158,17 +156,18 @@ fn main() -> Result<ExitCode> {
     MethodState::set(method);
 
     const MAIN_THREAD: usize = 1;
-    let worker_threads = thread::available_parallelism()?
-        .get()
-        .saturating_sub(MAIN_THREAD)
-        .max(1);
+    // zero worker when only main thread available
+    let worker_threads = thread::available_parallelism()
+        .map(NonZero::get)
+        .unwrap_or_default()
+        .saturating_sub(MAIN_THREAD);
     let rt = Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(WORKER_STACK_SIZE)
         .thread_name_fn(move || {
             static ID: AtomicUsize = AtomicUsize::new(0);
             let id = ID.fetch_add(1, Ordering::SeqCst);
-            format!("{method}-{}", id)
+            format!("{method}-{id}")
         })
         .worker_threads(worker_threads)
         .build()?;
@@ -203,11 +202,11 @@ impl AsyncMain {
 
         let mut join_set = JoinSet::new();
         (0..self.worker_threads).for_each(|_| {
-            join_set.spawn(recv(Socket::Remote));
-            join_set.spawn(recv(Socket::Local));
+            join_set.spawn(RecvSend.recv(Socket::Remote));
+            join_set.spawn(RecvSend.recv(Socket::Local));
         });
         let local_set = LocalSet::new();
-        join_set.spawn_local_on(recv(Socket::Remote), &local_set);
+        join_set.spawn_local_on(RecvSend.recv(Socket::Remote), &local_set);
 
         info!("service started");
 
@@ -223,7 +222,7 @@ impl AsyncMain {
             _ = join_set.join_next() => {
                 net_fail = true;
             },
-            _ = local_set.run_until(recv(Socket::Local)) => {
+            _ = local_set.run_until(RecvSend.recv(Socket::Local)) => {
                 net_fail = true;
             }
         }
@@ -240,107 +239,4 @@ impl AsyncMain {
 
         Ok(exit_code)
     }
-}
-
-fn send(mut buf: LeasedBuf, mut n: usize, socket: Socket, is_local: bool) {
-    n = match MethodState::current() {
-        Method::Xor => methods::xor(buf.as_mut_ptr(), n),
-        Method::DnsPad => {
-            // send to remote with pad
-            if !is_local {
-                methods::dns_pad(buf.as_mut_ptr(), n)
-            } else {
-                methods::dns_unpad(buf.as_mut_ptr(), n)
-            }
-        }
-        Method::DnsUnPad => {
-            // send to remote with unpad
-            if !is_local {
-                methods::dns_unpad(buf.as_mut_ptr(), n)
-            } else {
-                methods::dns_pad(buf.as_mut_ptr(), n)
-            }
-        }
-    };
-
-    let result = if is_local {
-        socket.try_send_to(&buf[..n], LocalAddr::current())
-    } else {
-        socket.try_send(&buf[..n])
-    };
-    match result {
-        Ok(_) => {}
-        Err(e) if e.kind() == ErrorKind::WouldBlock => {
-            warn_limit_global!(
-                1,
-                WARN_LIMIT_DUR,
-                "{socket} socket tx buffer is full, dropping packet"
-            )
-        }
-        Err(e) => {
-            if Shutdown::try_request() {
-                error!("{e}");
-            }
-        }
-    };
-}
-
-async fn recv(socket: Socket) {
-    let is_local = matches!(socket, Socket::Local);
-    while !Shutdown::requested() {
-        let Some(mut buf) = BufPool::acquire().await else {
-            break;
-        };
-
-        let (n, addr) = match socket.recv_from(buf.as_mut()).await {
-            Ok(v) => v,
-            Err(e) => {
-                error!("{e}");
-                break;
-            }
-        };
-        if log_enabled!(Level::Trace) {
-            N.fetch_max(n, Ordering::Relaxed);
-        }
-
-        if let DoLoop::Yes = local_addtional_handle(is_local, addr) {
-            warn_limit_global!(1, WARN_LIMIT_DUR, "client not connected");
-            continue;
-        };
-
-        send(buf, n, !socket, !is_local);
-    }
-}
-
-#[repr(u8)]
-enum DoLoop {
-    Yes,
-    No,
-}
-
-#[inline(never)]
-#[must_use]
-fn local_addtional_handle(is_local: bool, addr: SocketAddr) -> DoLoop {
-    if !is_local {
-        return DoLoop::No;
-    }
-
-    if !ConnectCtx::is_connected() {
-        ConnectCtx::connect(addr);
-    } else {
-        let local_addr = LocalAddr::current();
-
-        if addr == local_addr {
-            LastSeen::now();
-        } else {
-            warn_limit_global!(
-                1,
-                WARN_LIMIT_DUR,
-                "local={local_addr}, current={addr}, dropping"
-            );
-            return DoLoop::Yes;
-        }
-    }
-
-    DoLoop::No
 }

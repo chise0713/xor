@@ -1,42 +1,32 @@
-use std::slice;
+use std::{slice, sync::OnceLock};
 
 use anyhow::Result;
 use wide::u64x8;
 
-use crate::{ONCE, buf_pool::SIMD_WIDTH, concat_let};
+use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, concat_let};
 
-mod token {
-    use super::*;
-    use crate::INIT;
-    mod sealed {
-        use std::sync::OnceLock;
+static TOKEN: OnceLock<u8> = OnceLock::new();
 
-        pub(super) static TOKEN: OnceLock<u8> = OnceLock::new();
+pub struct XorToken;
+
+impl XorToken {
+    pub fn set(val: u8) -> Result<()> {
+        concat_let! {
+            ctx = "XorToken::set()" + ONCE
+        };
+        TOKEN.set(val).expect(&ctx);
+        Ok(())
     }
 
-    use self::sealed::*;
-    pub struct XorToken;
-
-    impl XorToken {
-        pub fn set(val: u8) -> Result<()> {
-            concat_let! {
-                ctx = "XorToken::set()" + ONCE
-            };
-            TOKEN.set(val).expect(&ctx);
-            Ok(())
-        }
-
-        #[inline(always)]
-        pub(super) fn get() -> u8 {
-            concat_let! {
-                ctx = "XorToken::get()" + INIT
-            };
-            *TOKEN.get().expect(&ctx)
-        }
+    #[must_use]
+    #[inline(always)]
+    pub(super) fn get() -> u8 {
+        concat_let! {
+            ctx = "XorToken::get()" + INIT
+        };
+        *TOKEN.get().expect(&ctx)
     }
 }
-
-pub use token::XorToken;
 
 #[inline(always)]
 #[must_use]

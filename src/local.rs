@@ -16,13 +16,26 @@ use parking_lot::{Once, OnceState, RwLock};
 
 use crate::{CORASETIME_UPDATE, INIT, K, ONCE, concat_let};
 
-const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
+pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
 static LOCAL_ADDR: RwLock<SocketAddr> = RwLock::new(NULL_SOCKET_ADDR);
+
+static LOCAL_ADDR_VERSION: AtomicU64 = AtomicU64::new(0);
 
 pub struct LocalAddr;
 
 impl LocalAddr {
+    #[inline(always)]
+    pub fn updated(ver: &mut u64) -> bool {
+        let glob_ver = LOCAL_ADDR_VERSION.load(Ordering::Relaxed);
+        if *ver != glob_ver {
+            *ver = glob_ver;
+            true
+        } else {
+            false
+        }
+    }
+
     #[inline(always)]
     pub fn current() -> SocketAddr {
         *LOCAL_ADDR.read()
@@ -30,7 +43,8 @@ impl LocalAddr {
 
     #[inline(always)]
     fn set(addr: SocketAddr) {
-        *LOCAL_ADDR.write() = addr
+        *LOCAL_ADDR.write() = addr;
+        LOCAL_ADDR_VERSION.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -39,7 +53,8 @@ static CONNECTED: AtomicBool = AtomicBool::new(false);
 pub struct ConnectCtx;
 
 impl ConnectCtx {
-    #[inline(always)]
+    #[cold]
+    #[inline(never)]
     pub fn connect(addr: SocketAddr) {
         if ConnectCtx::try_connect() {
             LastSeen::now();
