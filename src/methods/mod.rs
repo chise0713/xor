@@ -80,4 +80,4 @@ impl MethodState {
     }
 }
 
-import_modules!(xor, dns);
+import_modules!(xor, dns_pad);
