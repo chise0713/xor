@@ -1,19 +1,48 @@
 use std::slice;
 
+use anyhow::Result;
 use wide::u64x8;
 
-use crate::buf_pool::{CACHELINE_ALIGN, SIMD_WIDTH};
+use crate::{ONCE, buf_pool::SIMD_WIDTH, concat_let};
 
-#[inline(always)]
-fn align_check(ptr: usize) {
-    if !ptr.is_multiple_of(CACHELINE_ALIGN) {
-        unreachable!("buf must be {}B aligned", CACHELINE_ALIGN)
+mod token {
+    use super::*;
+    use crate::INIT;
+    mod sealed {
+        use std::sync::OnceLock;
+
+        pub(super) static TOKEN: OnceLock<u8> = OnceLock::new();
+    }
+
+    use self::sealed::*;
+    pub struct XorToken;
+
+    impl XorToken {
+        pub fn set(val: u8) -> Result<()> {
+            concat_let! {
+                ctx = "XorToken::set()" + ONCE
+            };
+            TOKEN.set(val).expect(&ctx);
+            Ok(())
+        }
+
+        #[inline(always)]
+        pub(super) fn get() -> u8 {
+            concat_let! {
+                ctx = "XorToken::get()" + INIT
+            };
+            *TOKEN.get().expect(&ctx)
+        }
     }
 }
 
+pub use token::XorToken;
+
 #[inline(always)]
-pub fn xor(ptr: *mut u8, n: usize, token: u8) {
-    align_check(ptr as usize);
+#[must_use]
+pub fn xor(ptr: *mut u8, n: usize) -> usize {
+    super::align_check(ptr.addr());
+    let token = XorToken::get();
 
     let n_simd = n / SIMD_WIDTH;
     let data: &mut [u64x8] = unsafe { slice::from_raw_parts_mut(ptr.cast(), n_simd) };
@@ -25,14 +54,14 @@ pub fn xor(ptr: *mut u8, n: usize, token: u8) {
 
     let rem = n % SIMD_WIDTH;
     if rem == 0 {
-        return;
+        return n;
     }
     let rem_ptr = unsafe { ptr.add(n_simd * SIMD_WIDTH) };
 
     let tail = unsafe { slice::from_raw_parts_mut(rem_ptr, rem) };
-    tail.iter_mut().for_each(|byte| {
-        *byte ^= token;
-    })
+    tail.iter_mut().for_each(|byte| *byte ^= token);
+
+    n
 }
 
 #[cfg(all(test, feature = "bench"))]
@@ -41,7 +70,7 @@ mod bench {
 
     use test::Bencher;
 
-    use crate::{K, buf_pool::AlignBox};
+    use crate::{K, buf_pool::AlignBox, methods::XorToken};
 
     const TEST_ITER: usize = K;
 
@@ -69,9 +98,13 @@ mod bench {
 
     #[bench]
     fn simd(b: &mut Bencher) {
-        use super::xor;
+        #[inline(always)]
+        fn xor(ptr: *mut u8, n: usize, _: u8) {
+            _ = super::xor(ptr, n);
+        }
         let mut data = AlignBox::new(N);
         let ptr = data.as_mut_ptr();
+        XorToken::set(TOKEN).unwrap();
         b.iter(|| bench(ptr, xor));
     }
 

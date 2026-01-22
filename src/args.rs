@@ -1,3 +1,7 @@
+use std::process::ExitCode;
+
+use anyhow::Result;
+
 #[derive(supershorty::Args, Debug)]
 #[args(name = "xor")]
 pub struct Args {
@@ -13,4 +17,13 @@ pub struct Args {
     pub timeout_f64_secs: Option<f64>,
     #[arg(flag = 't', help = "e.g. 0xFF")]
     pub token_hex_u8: Option<Box<str>>,
+    #[arg(flag = 's', help = "one of: `xor`, `dns`. defaults to `xor`")]
+    pub set_method: Option<Box<str>>,
+}
+
+const EXIT_INVALID_ARG: u8 = 2;
+
+pub fn invalid_argument() -> Result<ExitCode> {
+    Args::usage();
+    Ok(ExitCode::from(EXIT_INVALID_ARG))
 }

@@ -4,14 +4,15 @@ mod args;
 mod buf_pool;
 mod local;
 mod logger;
+mod methods;
 mod shutdown;
 mod socket;
-mod xor;
 
 use std::{
     io::ErrorKind,
     net::SocketAddr,
     process::ExitCode,
+    str::FromStr as _,
     sync::atomic::{AtomicUsize, Ordering},
     thread,
     time::Duration,
@@ -32,9 +33,9 @@ use crate::{
     buf_pool::{BufPool, LeasedBuf},
     local::{ConnectCtx, LastSeen, LocalAddr, Started, WatchDog},
     logger::Logger,
+    methods::{Method, MethodState, XorToken},
     shutdown::Shutdown,
     socket::{Socket, Sockets},
-    xor::xor,
 };
 
 macro_rules! tinystr_const {
@@ -99,6 +100,7 @@ fn main() -> Result<ExitCode> {
         remote_address,
         timeout_f64_secs,
         token_hex_u8,
+        set_method,
     } = match Args::parse() {
         Ok(v) => v,
         Err(e) => {
@@ -108,35 +110,50 @@ fn main() -> Result<ExitCode> {
 
     let Some(listen_address) = listen_address else {
         Args::usage();
-        return Ok(ExitCode::FAILURE);
+        return args::invalid_argument();
     };
     let Some(remote_address) = remote_address else {
         Args::usage();
-        return Ok(ExitCode::FAILURE);
+        return args::invalid_argument();
     };
 
     let timeout = timeout_f64_secs.unwrap_or(5.).max(0.5);
-    if timeout == 0. {
-        Args::usage();
-        return Ok(ExitCode::FAILURE);
-    }
-
-    let Some(token) = token_hex_u8.and_then(|t| {
-        t.strip_prefix("0x")
-            .and_then(|s| u8::from_str_radix(s, 16).ok())
-    }) else {
-        Args::usage();
-        return Ok(ExitCode::FAILURE);
-    };
 
     let mtu = mtu_usize.unwrap_or(DEFAULT_MTU);
     if mtu > LINK_MTU_MAX {
-        Args::usage();
-        return Ok(ExitCode::FAILURE);
+        return args::invalid_argument();
     }
 
-    let payload_max = mtu - LINK_PAYLOAD_OFFSET;
+    let payload_max = mtu.saturating_sub(LINK_PAYLOAD_OFFSET);
     let limit = buffer_limit_usize.unwrap_or(DEFAULT_BUFFER_LIMIT);
+
+    let method = match set_method.as_deref().map(Method::from_str).transpose() {
+        Ok(m) => m.unwrap_or_default(),
+        Err(_) => {
+            return args::invalid_argument();
+        }
+    };
+
+    match method {
+        Method::Xor => {
+            let Some(token) = token_hex_u8.and_then(|t| {
+                t.strip_prefix("0x")
+                    .and_then(|s| u8::from_str_radix(s, 16).ok())
+            }) else {
+                return args::invalid_argument();
+            };
+            XorToken::set(token)?;
+        }
+
+        Method::DnsPad => {
+            if !methods::bound_check(payload_max) {
+                return args::invalid_argument();
+            }
+        }
+
+        Method::DnsUnPad => {}
+    };
+    MethodState::set(method);
 
     const MAIN_THREAD: usize = 1;
     let worker_threads = thread::available_parallelism()?
@@ -163,7 +180,6 @@ fn main() -> Result<ExitCode> {
 
     rt.block_on(
         AsyncMain {
-            token,
             sockets,
             worker_threads,
         }
@@ -174,7 +190,6 @@ fn main() -> Result<ExitCode> {
 static N: AtomicUsize = AtomicUsize::new(0);
 
 struct AsyncMain {
-    token: u8,
     sockets: Sockets,
     worker_threads: usize,
 }
@@ -186,11 +201,11 @@ impl AsyncMain {
 
         let mut join_set = JoinSet::new();
         (0..self.worker_threads).for_each(|_| {
-            join_set.spawn(recv(self.token, Socket::Remote));
-            join_set.spawn(recv(self.token, Socket::Local));
+            join_set.spawn(recv(Socket::Remote));
+            join_set.spawn(recv(Socket::Local));
         });
         let local_set = LocalSet::new();
-        join_set.spawn_local_on(recv(self.token, Socket::Remote), &local_set);
+        join_set.spawn_local_on(recv(Socket::Remote), &local_set);
 
         info!("service started");
 
@@ -206,7 +221,7 @@ impl AsyncMain {
             _ = join_set.join_next() => {
                 net_fail = true;
             },
-            _ = local_set.run_until(recv(self.token, Socket::Local)) => {
+            _ = local_set.run_until(recv(Socket::Local)) => {
                 net_fail = true;
             }
         }
@@ -225,9 +240,25 @@ impl AsyncMain {
     }
 }
 
-fn send(mut buf: LeasedBuf, n: usize, token: u8, socket: Socket, is_local: bool) {
-    if token != 0 {
-        xor(buf.as_mut_ptr(), n, token);
+fn send(mut buf: LeasedBuf, mut n: usize, socket: Socket, is_local: bool) {
+    n = match MethodState::current() {
+        Method::Xor => methods::xor(buf.as_mut_ptr(), n),
+        Method::DnsPad => {
+            // send to remote with pad
+            if !is_local {
+                methods::dns_pad(buf.as_mut_ptr(), n)
+            } else {
+                methods::dns_unpad(buf.as_mut_ptr(), n)
+            }
+        }
+        Method::DnsUnPad => {
+            // send to remote with unpad
+            if !is_local {
+                methods::dns_unpad(buf.as_mut_ptr(), n)
+            } else {
+                methods::dns_pad(buf.as_mut_ptr(), n)
+            }
+        }
     };
 
     let result = if is_local {
@@ -252,7 +283,7 @@ fn send(mut buf: LeasedBuf, n: usize, token: u8, socket: Socket, is_local: bool)
     };
 }
 
-async fn recv(token: u8, socket: Socket) {
+async fn recv(socket: Socket) {
     let is_local = matches!(socket, Socket::Local);
     while !Shutdown::requested() {
         let Some(mut buf) = BufPool::acquire().await else {
@@ -275,7 +306,7 @@ async fn recv(token: u8, socket: Socket) {
             continue;
         };
 
-        send(buf, n, token, !socket, !is_local);
+        send(buf, n, !socket, !is_local);
     }
 }
 
