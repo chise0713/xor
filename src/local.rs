@@ -154,7 +154,7 @@ impl WatchDog {
 fn watchdog(timeout: f64) {
     let timeout_dur = Duration::from_secs_f64(timeout);
     let park_dur = Duration::from_secs_f64(timeout.div_euclid(3.));
-    UPDATE_INTERVAL.fetch_min((park_dur / 2).as_millis() as u64, Ordering::Relaxed);
+    UPDATE_INTERVAL.fetch_max(park_dur.as_millis().div_ceil(2) as u64, Ordering::Relaxed);
 
     loop {
         let park_dur = if ConnectCtx::is_connected() {
