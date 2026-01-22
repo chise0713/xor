@@ -66,7 +66,6 @@ pub struct Sockets {
 impl Sockets {
     pub fn new(listen_address: &str, remote_address: &str) -> Result<Self> {
         let listen_address: SocketAddr = listen_address.parse()?;
-        let remote_address: SocketAddr = remote_address.parse()?;
         let glob: SocketAddr = "[::]:0".parse()?;
 
         let local_domain = match listen_address {
@@ -94,10 +93,10 @@ impl Sockets {
         local.bind(&listen_address.into())?;
         remote.bind(&glob.into())?;
 
-        remote.connect(&remote_address.into())?;
-
         let local = StdUdpSocket::from(local);
         let remote = StdUdpSocket::from(remote);
+
+        remote.connect(remote_address)?;
 
         Ok(Self { local, remote })
     }
