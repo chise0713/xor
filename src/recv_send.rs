@@ -15,7 +15,14 @@ use crate::{
 pub struct RecvSend;
 
 impl RecvSend {
-    fn send(&self, mut buf: LeasedBuf, mut n: usize, socket: &Socket, method: &Method) {
+    fn send(
+        &self,
+        mut buf: LeasedBuf,
+        mut n: usize,
+        socket: &Socket,
+        method: &Method,
+        cached_local: &SocketAddr,
+    ) {
         // DnsPad is for: `local` -> self.pad() -> peer_padded
         // DnsUnPad is for: peer_padded -> self.unpad() -> `remote`
         n = match (method, socket) {
@@ -28,7 +35,10 @@ impl RecvSend {
             }
         };
 
-        if let Err(e) = socket.send(&buf[..n]) {
+        if let Err(e) = match socket {
+            Socket::Local => socket.try_send_to(&buf[..n], *cached_local),
+            Socket::Remote => socket.try_send(&buf[..n]),
+        } {
             match e.kind() {
                 ErrorKind::WouldBlock => {
                     warn_limit_global!(1, WARN_LIMIT_DUR, "{socket} tx full, drop");
@@ -67,7 +77,7 @@ impl RecvSend {
                 continue;
             };
 
-            self.send(buf, n, &!socket, method);
+            self.send(buf, n, &!socket, method, &cached_local);
         }
     }
 
