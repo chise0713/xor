@@ -14,7 +14,7 @@ use coarsetime::Instant;
 use log::info;
 use parking_lot::{Once, OnceState, RwLock};
 
-use crate::{INIT, K, ONCE, concat_let};
+use crate::{CORASETIME_UPDATE, INIT, K, ONCE, concat_let};
 
 const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
@@ -89,7 +89,7 @@ impl Started {
     }
 }
 
-static UPDATE_INTERVAL: AtomicU64 = AtomicU64::new(500);
+static UPDATE_INTERVAL: AtomicU64 = AtomicU64::new(CORASETIME_UPDATE);
 
 static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
 
@@ -154,7 +154,7 @@ impl WatchDog {
 fn watchdog(timeout: f64) {
     let timeout_dur = Duration::from_secs_f64(timeout);
     let park_dur = Duration::from_secs_f64(timeout.div_euclid(3.));
-    UPDATE_INTERVAL.store((park_dur / 2).as_millis() as u64, Ordering::Relaxed);
+    UPDATE_INTERVAL.fetch_min((park_dur / 2).as_millis() as u64, Ordering::Relaxed);
 
     loop {
         let park_dur = if ConnectCtx::is_connected() {
