@@ -50,11 +50,6 @@ impl Method {
             Method::DnsUnPad => "dnsunpad",
         }
     }
-
-    #[inline(always)]
-    pub fn is_symmetric(&self) -> bool {
-        matches!(self, Method::Xor)
-    }
 }
 
 impl FromStr for Method {

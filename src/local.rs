@@ -58,6 +58,7 @@ impl ConnectCtx {
     pub fn connect(addr: SocketAddr) {
         if ConnectCtx::try_connect() {
             LocalAddr::set(addr);
+            LastSeen::now();
             WatchDog::unpark();
             info!("connected client {addr}");
         }

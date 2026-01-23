@@ -32,11 +32,7 @@ use crate::{
     buf_pool::BufPool,
     local::{Started, WatchDog},
     logger::Logger,
-    methods::{
-        Method, MethodState,
-        dns_pad::{self, DNS_QUERY_LEN},
-        xor::XorToken,
-    },
+    methods::{Method, MethodState, dns_pad, xor::XorToken},
     recv_send::RecvSend,
     shutdown::Shutdown,
     socket::Sockets,
@@ -136,7 +132,7 @@ fn main() -> Result<ExitCode> {
         }
     };
 
-    let payload_max = match method {
+    match method {
         Method::Xor => {
             let Some(token) = token_hex_u8.and_then(|t| {
                 t.strip_prefix("0x")
@@ -145,17 +141,15 @@ fn main() -> Result<ExitCode> {
                 return args::invalid_argument();
             };
             XorToken::set(token)?;
-            payload_max
         }
 
         Method::DnsPad => {
-            if !dns_pad::dns_payload_bound_check(payload_max) {
+            if !dns_pad::payload_bound_check(payload_max) {
                 return args::invalid_argument();
             }
-            payload_max + DNS_QUERY_LEN
         }
 
-        Method::DnsUnPad => payload_max,
+        Method::DnsUnPad => {}
     };
     MethodState::set(method);
 

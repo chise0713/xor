@@ -100,8 +100,18 @@ pub const DNS_QUERY: [u8; DNS_QUERY_LEN] = {
 };
 
 #[must_use]
-pub fn dns_payload_bound_check(payload_max: usize) -> bool {
+pub fn payload_bound_check(payload_max: usize) -> bool {
     payload_max > DNS_QUERY_LEN
+}
+
+#[inline(always)]
+pub fn runtime_apply_check(buf_len: usize, n: usize) -> bool {
+    buf_len > n + DNS_QUERY_LEN
+}
+
+#[inline(always)]
+pub fn runtime_undo_check(n: usize) -> bool {
+    n >= DNS_QUERY_LEN
 }
 
 // `local` -> self.apply() -> peer_padded

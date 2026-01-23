@@ -1,13 +1,16 @@
 use std::{io::ErrorKind, net::SocketAddr, sync::atomic::Ordering};
 
-use log::{Level, error, log_enabled};
+use log::{Level, error, log_enabled, warn};
 use log_limit::warn_limit_global;
 
 use crate::{
     N, WARN_LIMIT_DUR,
     buf_pool::BufPool,
     local::{ConnectCtx, LastSeen, LocalAddr, NULL_SOCKET_ADDR},
-    methods::{DnsPad, Method, MethodImpl as _, MethodState, Xor},
+    methods::{
+        DnsPad, Method, MethodImpl as _, MethodState, Xor,
+        dns_pad::{self, DNS_QUERY_LEN},
+    },
     shutdown::Shutdown,
     socket::Socket,
 };
@@ -26,23 +29,27 @@ impl RecvSend {
     ) {
         let is_local = !FROM_RECV;
         match method {
-            m if m.is_symmetric() => Xor::apply(buf.as_mut_ptr(), &mut n),
-            Method::DnsPad => {
-                if is_local {
-                    DnsPad::undo(buf.as_mut_ptr(), &mut n)
+            Method::DnsPad | Method::DnsUnPad => {
+                let do_apply = matches!(method, Method::DnsPad) ^ is_local;
+                if do_apply {
+                    if !dns_pad::runtime_apply_check(buf.len(), n) {
+                        warn!("dns pad overflow: cap={}, n={n}", buf.len());
+                        return;
+                    }
+                    DnsPad::apply(buf.as_mut_ptr(), &mut n);
                 } else {
-                    DnsPad::apply(buf.as_mut_ptr(), &mut n)
+                    if !dns_pad::runtime_undo_check(n) {
+                        warn!("dns unpad underflow: {n} < {DNS_QUERY_LEN}");
+                        return;
+                    }
+                    DnsPad::undo(buf.as_mut_ptr(), &mut n);
                 }
             }
-            Method::DnsUnPad => {
-                if is_local {
-                    DnsPad::apply(buf.as_mut_ptr(), &mut n)
-                } else {
-                    DnsPad::undo(buf.as_mut_ptr(), &mut n)
-                }
+
+            Method::Xor => {
+                Xor::apply(buf.as_mut_ptr(), &mut n);
             }
-            _ => unreachable!(),
-        };
+        }
 
         if let Err(e) = if is_local {
             socket.try_send_to(&buf[..n], *cached_local)
@@ -126,6 +133,7 @@ impl RecvSend {
 
         if LocalAddr::updated(local_ver) {
             *cached_local = LocalAddr::current();
+            return false;
         }
 
         if addr == cached_local {
