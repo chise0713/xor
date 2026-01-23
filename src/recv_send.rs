@@ -133,15 +133,16 @@ impl RecvSend {
 
         if LocalAddr::updated(local_ver) {
             *cached_local = LocalAddr::current();
+            LastSeen::now();
             return false;
         }
 
         if addr == cached_local {
             LastSeen::now();
-            false
-        } else {
-            self.mismatch(cached_local, addr)
+            return false;
         }
+
+        self.mismatch(cached_local, addr)
     }
 
     #[must_use]
