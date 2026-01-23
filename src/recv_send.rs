@@ -164,8 +164,6 @@ impl RecvSend {
 
         if LocalAddr::updated(local_ver) {
             *cached_local = LocalAddr::current();
-            LastSeen::now();
-            return false;
         }
 
         if addr == cached_local {
