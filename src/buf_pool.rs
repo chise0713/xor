@@ -1,22 +1,22 @@
 use std::{
     alloc::{self, Layout},
+    io::{Error, ErrorKind},
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
     ptr::NonNull,
     slice,
+    sync::OnceLock,
 };
 
 use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
 use crossbeam_utils::CachePadded;
 use log_limit::warn_limit_global;
-use tokio::sync::{OnceCell, Semaphore as SP, SemaphorePermit, TryAcquireError};
+use tokio::sync::{Semaphore as SP, SemaphorePermit, TryAcquireError};
 use wide::u64x8;
 
 use self::sealed::BpSealed;
-use crate::{INIT, WARN_LIMIT_DUR, concat_let};
-
-static POOL_SEM: SP = SP::const_new(0);
+use crate::{INIT, ONCE, WARN_LIMIT_DUR, concat_let};
 
 pub const SIMD_WIDTH: usize = size_of::<u64x8>();
 
@@ -73,14 +73,17 @@ impl DerefMut for AlignBox {
     }
 }
 
-static BUF_POOL: OnceCell<ArrayQueue<AlignBox>> = OnceCell::const_new();
+static BUF_POOL: OnceLock<ArrayQueue<AlignBox>> = OnceLock::new();
+
 const PUSH_FAILURE: &str = "failed to push BufPool";
 
 pub struct BufPool;
 
 impl BufPool {
     pub fn init(limit: usize, payload_max: usize) -> Result<()> {
-        BUF_POOL.set(ArrayQueue::new(limit))?;
+        if BUF_POOL.set(ArrayQueue::new(limit)).is_err() {
+            return Err(Error::new(ErrorKind::AlreadyExists, ONCE.as_str()))?;
+        };
 
         (0..limit).for_each(|_| {
             BpSealed
@@ -104,12 +107,9 @@ impl BufPool {
                 Semaphore.acquire().await.unwrap()
             }
         };
-        let buf = BpSealed.pop().expect("semaphore permits mismatch!");
+        let inner = ManuallyDrop::new(BpSealed.pop().expect("semaphore permits mismatch!"));
 
-        Some(LeasedBuf {
-            inner: ManuallyDrop::new(buf),
-            _p,
-        })
+        Some(LeasedBuf { inner, _p })
     }
 }
 
@@ -157,6 +157,8 @@ mod sealed {
         }
     }
 }
+
+static POOL_SEM: SP = SP::const_new(0);
 
 struct Semaphore;
 

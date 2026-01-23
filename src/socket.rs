@@ -23,13 +23,6 @@ pub enum Socket {
     Remote,
 }
 
-impl Socket {
-    #[inline(always)]
-    pub fn is_local(&self) -> bool {
-        matches!(*self, Self::Local)
-    }
-}
-
 impl Deref for Socket {
     type Target = UdpSocket;
 

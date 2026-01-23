@@ -32,10 +32,14 @@ use crate::{
     buf_pool::BufPool,
     local::{Started, WatchDog},
     logger::Logger,
-    methods::{DNS_QUERY_LEN, Method, MethodState, XorToken},
+    methods::{
+        Method, MethodState,
+        dns_pad::{self, DNS_QUERY_LEN},
+        xor::XorToken,
+    },
     recv_send::RecvSend,
     shutdown::Shutdown,
-    socket::{Socket, Sockets},
+    socket::Sockets,
 };
 
 macro_rules! tinystr_const {
@@ -145,7 +149,7 @@ fn main() -> Result<ExitCode> {
         }
 
         Method::DnsPad => {
-            if !methods::dns_payload_bound_check(payload_max) {
+            if !dns_pad::dns_payload_bound_check(payload_max) {
                 return args::invalid_argument();
             }
             payload_max + DNS_QUERY_LEN
@@ -200,13 +204,15 @@ impl AsyncMain {
     async fn enter(self) -> Result<ExitCode> {
         self.sockets.convert()?;
 
+        const REMOTE: bool = false;
+        const LOCAL: bool = true;
         let mut join_set = JoinSet::new();
         (0..self.worker_threads).for_each(|_| {
-            join_set.spawn(RecvSend.recv(Socket::Remote));
-            join_set.spawn(RecvSend.recv(Socket::Local));
+            join_set.spawn(RecvSend.recv::<REMOTE>());
+            join_set.spawn(RecvSend.recv::<LOCAL>());
         });
         let local_set = LocalSet::new();
-        join_set.spawn_local_on(RecvSend.recv(Socket::Remote), &local_set);
+        join_set.spawn_local_on(RecvSend.recv::<REMOTE>(), &local_set);
 
         info!("service started");
 
@@ -222,7 +228,7 @@ impl AsyncMain {
             _ = join_set.join_next() => {
                 net_fail = true;
             },
-            _ = local_set.run_until(RecvSend.recv(Socket::Local)) => {
+            _ = local_set.run_until(RecvSend.recv::<LOCAL>()) => {
                 net_fail = true;
             }
         }

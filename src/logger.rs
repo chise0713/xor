@@ -1,6 +1,6 @@
 use std::io::{LineWriter, Write as _};
 
-use env_logger::{Env, Target};
+use env_logger::{Builder as EnvLoggerBuilder, Env, Target};
 use log::Level;
 
 use crate::K;
@@ -10,7 +10,7 @@ pub struct Logger;
 impl Logger {
     pub fn init() {
         let buf_writer = LineWriter::with_capacity(4 * K, std::io::stdout());
-        env_logger::Builder::from_env(Env::default().default_filter_or("info"))
+        EnvLoggerBuilder::from_env(Env::default().default_filter_or("info"))
             .target(Target::Pipe(Box::new(buf_writer)))
             .format(move |buf, record| {
                 let level_str = match record.level() {

@@ -1,5 +1,7 @@
 // those header were wrote by gemini
 
+use crate::methods::MethodImpl;
+
 mod _s {
     pub const HEADER_LEN: usize = 12;
     // 1 byte (\x0C) + 12 bytes ("root-servers") +
@@ -102,23 +104,28 @@ pub fn dns_payload_bound_check(payload_max: usize) -> bool {
     payload_max > DNS_QUERY_LEN
 }
 
-#[inline(always)]
-#[must_use]
-pub fn dns_pad(ptr: *mut u8, n: usize) -> usize {
-    super::align_check(ptr.addr());
-    unsafe {
-        core::ptr::copy(ptr.cast_const(), ptr.add(DNS_QUERY_LEN), n);
-        core::ptr::copy(DNS_QUERY.as_ptr(), ptr, DNS_QUERY_LEN);
-    };
-    n.saturating_add(DNS_QUERY_LEN)
-}
+// `local` -> self.apply() -> peer_padded
+// peer_padded -> self.undo() -> `remote`
+// vice versa
+pub struct DnsPad;
 
-#[inline(always)]
-#[must_use]
-pub fn dns_unpad(ptr: *mut u8, n: usize) -> usize {
-    super::align_check(ptr.addr());
-    unsafe {
-        core::ptr::copy(ptr.add(DNS_QUERY_LEN), ptr, n);
-    };
-    n.saturating_sub(DNS_QUERY_LEN)
+impl MethodImpl for DnsPad {
+    #[inline(always)]
+    fn apply(ptr: *mut u8, n: &mut usize) {
+        super::align_check(ptr.addr());
+        unsafe {
+            core::ptr::copy(ptr.cast_const(), ptr.add(DNS_QUERY_LEN), *n);
+            core::ptr::copy(DNS_QUERY.as_ptr(), ptr, DNS_QUERY_LEN);
+        };
+        *n = n.saturating_add(DNS_QUERY_LEN)
+    }
+
+    #[inline(always)]
+    fn undo(ptr: *mut u8, n: &mut usize) {
+        super::align_check(ptr.addr());
+        unsafe {
+            core::ptr::copy(ptr.add(DNS_QUERY_LEN), ptr, *n);
+        };
+        *n = n.saturating_sub(DNS_QUERY_LEN)
+    }
 }

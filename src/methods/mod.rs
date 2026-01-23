@@ -1,16 +1,27 @@
+macro_rules! use_impl_struct {
+    ($($mod_name:ident),*) => {
+        $(
+            ::paste::paste! {
+                pub mod $mod_name;
+                pub use $mod_name::[< $mod_name:camel >];
+            }
+        )*
+    };
+}
+use_impl_struct!(xor, dns_pad);
+
 use std::{fmt::Display, str::FromStr, sync::OnceLock};
 
 use anyhow::bail;
 
 use crate::{INIT, ONCE, concat_let};
 
-macro_rules! import_modules {
-    ($($mod_name:ident),*) => {
-        $(
-            mod $mod_name;
-            pub use $mod_name::*;
-        )*
-    };
+pub trait MethodImpl {
+    fn apply(ptr: *mut u8, n: &mut usize);
+    #[inline(always)]
+    fn undo(ptr: *mut u8, n: &mut usize) {
+        Self::apply(ptr, n)
+    }
 }
 
 #[inline(always)]
@@ -38,6 +49,11 @@ impl Method {
             Method::DnsPad => "dnspad",
             Method::DnsUnPad => "dnsunpad",
         }
+    }
+
+    #[inline(always)]
+    pub fn is_symmetric(&self) -> bool {
+        matches!(self, Method::Xor)
     }
 }
 
@@ -79,5 +95,3 @@ impl MethodState {
         CURRENT_METHOD.get().expect(&ctx)
     }
 }
-
-import_modules!(xor, dns_pad);
