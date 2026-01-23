@@ -33,7 +33,7 @@ fn align_check(ptr: usize) {
     }
 }
 
-#[repr(u8)]
+#[repr(usize)]
 #[derive(Default, Clone, Copy)]
 pub enum Method {
     #[default]

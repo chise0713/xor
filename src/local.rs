@@ -3,7 +3,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{
         OnceLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -20,13 +20,13 @@ pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::fr
 
 static LOCAL_ADDR: RwLock<SocketAddr> = RwLock::new(NULL_SOCKET_ADDR);
 
-static LOCAL_ADDR_VERSION: AtomicU64 = AtomicU64::new(0);
+static LOCAL_ADDR_VERSION: AtomicUsize = AtomicUsize::new(0);
 
 pub struct LocalAddr;
 
 impl LocalAddr {
     #[inline(always)]
-    pub fn updated(ver: &mut u64) -> bool {
+    pub fn updated(ver: &mut usize) -> bool {
         let glob_ver = LOCAL_ADDR_VERSION.load(Ordering::Relaxed);
         if *ver != glob_ver {
             *ver = glob_ver;

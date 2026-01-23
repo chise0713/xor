@@ -20,8 +20,8 @@ impl RecvSend {
         &self,
         buf: &mut [u8],
         mut n: usize,
-        socket: &Socket,
-        method: &Method,
+        socket: Socket,
+        method: Method,
         cached_local: &SocketAddr,
     ) {
         let is_local = !FROM_RECV;
@@ -70,7 +70,7 @@ impl RecvSend {
         };
         let mut local_ver = 0;
         let mut cached_local = NULL_SOCKET_ADDR;
-        let method = MethodState::current();
+        let method = *MethodState::current();
         while !Shutdown::requested() {
             let Some(mut buf) = BufPool::acquire().await else {
                 break;
@@ -91,7 +91,7 @@ impl RecvSend {
                 continue;
             }
 
-            self.send::<IS_LOCAL>(&mut buf, n, &!socket, method, &cached_local);
+            self.send::<IS_LOCAL>(&mut buf, n, !socket, method, &cached_local);
         }
     }
 
@@ -101,7 +101,7 @@ impl RecvSend {
         &self,
         addr: &SocketAddr,
         cached_local: &mut SocketAddr,
-        local_ver: &mut u64,
+        local_ver: &mut usize,
     ) -> bool {
         if IS_LOCAL {
             self.local_addtional(addr, cached_local, local_ver)
@@ -116,7 +116,7 @@ impl RecvSend {
         &self,
         addr: &SocketAddr,
         cached_local: &mut SocketAddr,
-        local_ver: &mut u64,
+        local_ver: &mut usize,
     ) -> bool {
         if !ConnectCtx::is_connected() {
             ConnectCtx::connect(*addr);
@@ -142,7 +142,7 @@ impl RecvSend {
         &self,
         _: &SocketAddr,
         cached_local: &mut SocketAddr,
-        local_ver: &mut u64,
+        local_ver: &mut usize,
     ) -> bool {
         if LocalAddr::updated(local_ver) {
             *cached_local = LocalAddr::current();
