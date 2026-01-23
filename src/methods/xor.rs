@@ -37,13 +37,13 @@ pub struct Xor;
 
 impl MethodImpl for Xor {
     #[inline(always)]
-    fn apply(ptr: *mut u8, n: &mut usize) {
-        xor(ptr, n)
+    unsafe fn apply(ptr: *mut u8, n: &mut usize) {
+        unsafe { xor(ptr, n) }
     }
 }
 
 #[inline(always)]
-fn xor(ptr: *mut u8, n: &usize) {
+unsafe fn xor(ptr: *mut u8, n: &usize) {
     super::align_check(ptr.addr());
     let (token, simd) = XorToken::get();
 
@@ -99,7 +99,7 @@ mod bench {
     fn simd(b: &mut Bencher) {
         #[inline(always)]
         fn xor(ptr: *mut u8, n: usize, _: u8) {
-            super::xor(ptr, &n);
+            unsafe { super::xor(ptr, &n) };
         }
         let mut data = AlignBox::new(N);
         let ptr = data.as_mut_ptr();

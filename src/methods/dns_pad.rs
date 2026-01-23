@@ -121,7 +121,7 @@ pub struct DnsPad;
 
 impl MethodImpl for DnsPad {
     #[inline(always)]
-    fn apply(ptr: *mut u8, n: &mut usize) {
+    unsafe fn apply(ptr: *mut u8, n: &mut usize) {
         super::align_check(ptr.addr());
         unsafe {
             core::ptr::copy(ptr.cast_const(), ptr.add(DNS_QUERY_LEN), *n);
@@ -131,7 +131,7 @@ impl MethodImpl for DnsPad {
     }
 
     #[inline(always)]
-    fn undo(ptr: *mut u8, n: &mut usize) {
+    unsafe fn undo(ptr: *mut u8, n: &mut usize) {
         super::align_check(ptr.addr());
         unsafe {
             core::ptr::copy(ptr.add(DNS_QUERY_LEN), ptr, *n);

@@ -63,19 +63,19 @@ impl RecvSend {
                         warn!("dns pad overflow: cap={}, n={n}", buf.len());
                         return;
                     }
-                    DnsPad::apply(buf.as_mut_ptr(), &mut n);
+                    unsafe { DnsPad::apply(buf.as_mut_ptr(), &mut n) };
                 } else {
                     if !dns_pad::runtime_undo_check(n) {
                         warn!("dns unpad underflow: {n} < {DNS_QUERY_LEN}");
                         return;
                     }
-                    DnsPad::undo(buf.as_mut_ptr(), &mut n);
+                    unsafe { DnsPad::undo(buf.as_mut_ptr(), &mut n) };
                 }
             }
 
             Method::Xor => {
                 // xor is symmetrical
-                Xor::apply(buf.as_mut_ptr(), &mut n);
+                unsafe { Xor::apply(buf.as_mut_ptr(), &mut n) };
             }
         }
 

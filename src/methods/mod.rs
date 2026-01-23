@@ -17,10 +17,10 @@ use anyhow::bail;
 use crate::{INIT, ONCE, concat_let};
 
 pub trait MethodImpl {
-    fn apply(ptr: *mut u8, n: &mut usize);
+    unsafe fn apply(ptr: *mut u8, n: &mut usize);
     #[inline(always)]
-    fn undo(ptr: *mut u8, n: &mut usize) {
-        Self::apply(ptr, n)
+    unsafe fn undo(ptr: *mut u8, n: &mut usize) {
+        unsafe { Self::apply(ptr, n) }
     }
 }
 
