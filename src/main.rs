@@ -127,7 +127,7 @@ fn main() -> Result<ExitCode> {
     }
 
     let payload_max = mtu.saturating_sub(LINK_PAYLOAD_OFFSET);
-    let limit = buffer_limit_usize.unwrap_or(DEFAULT_BUFFER_LIMIT);
+    let limit = buffer_limit_usize.unwrap_or(usize::MIN);
 
     let method = match set_method.as_deref().map(Method::from_str).transpose() {
         Ok(m) => m.unwrap_or_default(),
@@ -161,10 +161,10 @@ fn main() -> Result<ExitCode> {
 
     const MAIN_THREAD: usize = 1;
     // zero worker when only main thread available
-    let worker_threads = thread::available_parallelism()
+    let total_threads = thread::available_parallelism()
         .map(NonZero::get)
-        .unwrap_or_default()
-        .saturating_sub(MAIN_THREAD);
+        .unwrap_or_default();
+    let worker_threads = total_threads.saturating_sub(MAIN_THREAD);
     let rt = Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(WORKER_STACK_SIZE)
@@ -179,7 +179,16 @@ fn main() -> Result<ExitCode> {
     let sockets = Sockets::new(&listen_address, &remote_address)?;
     BgClock::new(CORASETIME_UPDATE).start()?;
     WatchDog::start(timeout)?;
-    BufPool::init(limit, payload_max)?;
+    BufPool::init(
+        match (limit, total_threads) {
+            (l, _) if l != 0 => l,
+            // one thread => two tasks => two permits
+            (0, t) if t != 0 => t * 2,
+            // defaults to `DEFAULT_BUFFER_LIMIT`
+            _ => DEFAULT_BUFFER_LIMIT,
+        },
+        payload_max,
+    )?;
     Logger::init();
     Started::now();
 
