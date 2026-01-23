@@ -12,7 +12,7 @@ Command Summary:
         -m              for link mtu
         -o              client timeout in seconds
         -r              remote address
-        -s              one of: `xor`, `dns`. defaults to `xor`
+        -s              one of: `xor`, `dnspad`, `dnsunpad`; defaults to `xor`
         -t              e.g. 0xFF
 ```
 ## Example
