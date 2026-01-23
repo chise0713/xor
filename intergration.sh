@@ -108,8 +108,16 @@ while getopts "b:s:i" opt; do
 	i)
 		io_uring=1
 		;;
+	\?)
+		exit 2
+		;;
 	esac
 done
+shift $((OPTIND - 1))
+if [ $# -ne 0 ]; then
+	echo "unknow argument: $*" >&2
+	exit 2
+fi
 method_opt="-sxor"
 mtu_size=$((buf_size + 48))
 
