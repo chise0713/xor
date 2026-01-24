@@ -25,9 +25,16 @@ static LOCAL_ADDR_VERSION: AtomicUsize = AtomicUsize::new(0);
 pub struct LocalAddr;
 
 impl LocalAddr {
+    #[must_use]
+    #[inline(always)]
+    pub fn version() -> usize {
+        LOCAL_ADDR_VERSION.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
     #[inline(always)]
     pub fn updated(ver: &mut usize) -> bool {
-        let glob_ver = LOCAL_ADDR_VERSION.load(Ordering::Relaxed);
+        let glob_ver = Self::version();
         if *ver != glob_ver {
             *ver = glob_ver;
             true

@@ -1,5 +1,6 @@
 use std::{
     fmt::Display,
+    io::{Error, ErrorKind},
     net::{SocketAddr, UdpSocket as StdUdpSocket},
     ops::{Deref, Not},
     sync::OnceLock,
@@ -105,13 +106,18 @@ impl Sockets {
     }
 
     pub fn convert(self) -> Result<()> {
-        const_concat! {
-            CTX = "Socket::convert(): " + ONCE
+        let exist = |_| {
+            const_concat! {
+                CTX = "Socket::convert(): " + ONCE
+            };
+            Error::new(ErrorKind::AlreadyExists, CTX.as_str())
         };
-        let l = LOCAL_SOCKET.set(UdpSocket::from_std(self.local)?);
-        let r = REMOTE_SOCKET.set(UdpSocket::from_std(self.remote)?);
-        l.expect(&CTX);
-        r.expect(&CTX);
+        LOCAL_SOCKET
+            .set(UdpSocket::from_std(self.local)?)
+            .map_err(exist)?;
+        REMOTE_SOCKET
+            .set(UdpSocket::from_std(self.remote)?)
+            .map_err(exist)?;
         Ok(())
     }
 }

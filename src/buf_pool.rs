@@ -51,9 +51,7 @@ impl Drop for AlignBox {
     fn drop(&mut self) {
         let align_size = CACHELINE_ALIGN.max(SIMD_WIDTH);
         let layout = Layout::from_size_align(self.inner.padded_len, align_size).unwrap();
-        unsafe {
-            alloc::dealloc(self.inner.ptr.as_ptr(), layout);
-        }
+        unsafe { alloc::dealloc(self.inner.ptr.as_ptr(), layout) }
     }
 }
 

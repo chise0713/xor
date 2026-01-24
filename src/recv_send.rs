@@ -123,7 +123,7 @@ impl RecvSend {
                 N.fetch_max(n, Ordering::Relaxed);
             }
 
-            if self.addtional::<M>(&addr, &mut cached_local, &mut local_ver) {
+            if self.additional::<M>(&addr, &mut cached_local, &mut local_ver) {
                 continue;
             }
 
@@ -132,17 +132,16 @@ impl RecvSend {
     }
 
     #[must_use]
-    #[inline(always)]
-    fn addtional<M: Mode>(
+    fn additional<M: Mode>(
         &self,
         addr: &SocketAddr,
         cached_local: &mut SocketAddr,
         local_ver: &mut usize,
     ) -> bool {
         if M::IS_LOCAL {
-            self.local_addtional(addr, cached_local, local_ver)
+            self.local_additional(addr, cached_local, local_ver)
         } else {
-            self.remote_addtional(addr, cached_local, local_ver)
+            self.remote_additional(addr, cached_local, local_ver)
         }
     }
 
@@ -150,7 +149,7 @@ impl RecvSend {
     // see `self.remote_addtional()`
     #[must_use]
     #[inline(never)]
-    fn local_addtional(
+    fn local_additional(
         &self,
         addr: &SocketAddr,
         cached_local: &mut SocketAddr,
@@ -159,6 +158,7 @@ impl RecvSend {
         if !ConnectCtx::is_connected() {
             ConnectCtx::connect(*addr);
             *cached_local = *addr;
+            *local_ver = LocalAddr::version();
             return false;
         }
 
@@ -177,8 +177,7 @@ impl RecvSend {
     // `&cached_local` will be pass into send
     // Socket::Local.try_send_to(buf, addr)
     #[must_use]
-    #[inline(never)]
-    fn remote_addtional(
+    fn remote_additional(
         &self,
         _: &SocketAddr,
         cached_local: &mut SocketAddr,
