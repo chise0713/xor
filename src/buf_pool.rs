@@ -16,7 +16,7 @@ use tokio::sync::{Semaphore as SP, SemaphorePermit, TryAcquireError};
 use wide::u64x8;
 
 use self::sealed::BpSealed;
-use crate::{INIT, ONCE, WARN_LIMIT_DUR, concat_let};
+use crate::{INIT, ONCE, WARN_LIMIT_DUR, const_concat};
 
 pub const SIMD_WIDTH: usize = size_of::<u64x8>();
 
@@ -150,10 +150,10 @@ mod sealed {
 
         #[inline(always)]
         fn deref(&self) -> &Self::Target {
-            concat_let! {
-                ctx = "BufPool: " + INIT
+            const_concat! {
+                CTX = "BufPool: " + INIT
             };
-            BUF_POOL.get().expect(&ctx)
+            BUF_POOL.get().expect(&CTX)
         }
     }
 }

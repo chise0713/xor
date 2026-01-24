@@ -3,7 +3,7 @@ use std::{slice, sync::OnceLock};
 use anyhow::Result;
 use wide::u64x8;
 
-use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, concat_let, methods::MethodImpl};
+use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, const_concat, methods::MethodImpl};
 
 static TOKEN_U8: OnceLock<u8> = OnceLock::new();
 static TOKEN_SIMD: OnceLock<u64x8> = OnceLock::new();
@@ -12,24 +12,24 @@ pub struct XorToken;
 
 impl XorToken {
     pub fn set(val: u8) -> Result<()> {
-        concat_let! {
-            ctx = "XorToken::set()" + ONCE
+        const_concat! {
+            CTX = "XorToken::set()" + ONCE
         };
-        TOKEN_U8.set(val).expect(&ctx);
+        TOKEN_U8.set(val).expect(&CTX);
         const BROADCAST_MUL: u64 = 0x0101010101010101;
         TOKEN_SIMD
             .set(u64x8::splat(BROADCAST_MUL.wrapping_mul(val as u64)))
-            .expect(&ctx);
+            .expect(&CTX);
         Ok(())
     }
 
     #[must_use]
     #[inline(always)]
     fn get() -> (u8, u64x8) {
-        concat_let! {
-            ctx = "XorToken::get()" + INIT
+        const_concat! {
+            CTX = "XorToken::get()" + INIT
         };
-        (*TOKEN_U8.get().expect(&ctx), *TOKEN_SIMD.get().expect(&ctx))
+        (*TOKEN_U8.get().expect(&CTX), *TOKEN_SIMD.get().expect(&CTX))
     }
 }
 

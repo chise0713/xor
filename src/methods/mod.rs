@@ -14,7 +14,7 @@ use std::{fmt::Display, str::FromStr, sync::OnceLock};
 
 use anyhow::bail;
 
-use crate::{INIT, ONCE, concat_let};
+use crate::{INIT, ONCE, const_concat};
 
 pub trait MethodImpl {
     unsafe fn apply(ptr: *mut u8, n: &mut usize);
@@ -77,16 +77,16 @@ pub struct MethodState;
 
 impl MethodState {
     pub fn set(method: Method) {
-        concat_let! {
-            ctx = "MethodState: " + ONCE
+        const_concat! {
+            CTX = "MethodState::set(): " + ONCE
         }
-        CURRENT_METHOD.set(method).ok().expect(&ctx)
+        CURRENT_METHOD.set(method).ok().expect(&CTX)
     }
 
     pub fn current() -> &'static Method {
-        concat_let! {
-            ctx = "MethodState: " + INIT
+        const_concat! {
+            CTX = "MethodState::current(): " + INIT
         }
-        CURRENT_METHOD.get().expect(&ctx)
+        CURRENT_METHOD.get().expect(&CTX)
     }
 }

@@ -57,9 +57,9 @@ tinystr_const! {
 }
 
 #[macro_export]
-macro_rules! concat_let {
+macro_rules! const_concat {
     ($name:ident = $prefix:literal + $suffix:expr) => {
-        let $name: ::tinystr::TinyAsciiStr<{ $prefix.len() + $suffix.len() }> = {
+        const $name: ::tinystr::TinyAsciiStr<{ $prefix.len() + $suffix.len() }> = {
             // all as `const` to avoid runtime computation
             const SUFFIX: ::tinystr::TinyAsciiStr<{ $suffix.len() }> = $suffix;
             const BASE: ::tinystr::TinyAsciiStr<{ $prefix.len() }> =

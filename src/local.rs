@@ -14,7 +14,7 @@ use coarsetime::Instant;
 use log::info;
 use parking_lot::{Once, OnceState, RwLock};
 
-use crate::{CORASETIME_UPDATE, INIT, K, ONCE, concat_let};
+use crate::{CORASETIME_UPDATE, INIT, K, ONCE, const_concat};
 
 pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
@@ -89,18 +89,18 @@ pub struct Started;
 impl Started {
     #[inline(always)]
     pub fn now() {
-        concat_let! {
-           ctx = "Socket::now(): " + ONCE
+        const_concat! {
+           CTX = "Socket::now(): " + ONCE
         };
-        START.set(Instant::now()).expect(&ctx)
+        START.set(Instant::now()).expect(&CTX)
     }
 
     #[inline(always)]
     fn at() -> Instant {
-        concat_let! {
-           ctx = "Socket::at(): " + INIT
+        const_concat! {
+           CTX = "Socket::at(): " + INIT
         };
-        *START.get().expect(&ctx)
+        *START.get().expect(&CTX)
     }
 }
 
@@ -138,11 +138,11 @@ pub struct WatchDog;
 
 impl WatchDog {
     pub fn start(timeout: f64) -> Result<()> {
-        concat_let! {
-            ctx = "WatchDog::start()" + ONCE
+        const_concat! {
+            CTX = "WatchDog::start()" + ONCE
         };
         if matches!(WATCH_DOG.state(), OnceState::Done) {
-            return Err(Error::new(ErrorKind::AlreadyExists, ctx.as_str()))?;
+            return Err(Error::new(ErrorKind::AlreadyExists, CTX.as_str()))?;
         };
         WATCH_DOG.call_once(|| {});
         WATCH_DOG_HANDLE
@@ -152,16 +152,16 @@ impl WatchDog {
                     .stack_size(16 * K)
                     .spawn(move || watchdog(timeout))?,
             )
-            .expect(&ctx);
+            .expect(&CTX);
         Ok(())
     }
 
     #[inline(always)]
     fn unpark() {
-        concat_let! {
-            ctx = "WatchDog::unpark()" + INIT
+        const_concat! {
+            CTX = "WatchDog::unpark()" + INIT
         };
-        WATCH_DOG_HANDLE.get().expect(&ctx).thread().unpark()
+        WATCH_DOG_HANDLE.get().expect(&CTX).thread().unpark()
     }
 }
 
