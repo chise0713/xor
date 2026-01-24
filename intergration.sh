@@ -40,7 +40,12 @@ SESSION="udp-bench"
 HTOP_TEMP_DIR="$(mktemp -d)"
 mkdir -p "$HTOP_TEMP_DIR/htop"
 cleanup() {
-	[ -d "$HTOP_TEMP_DIR" ] && rm -rf "$HTOP_TEMP_DIR"
+	if [ -d "$HTOP_TEMP_DIR" ]; then
+		rm -rf "$HTOP_TEMP_DIR"
+	fi
+	if tmux has-session -t "$SESSION" 2>/dev/null; then
+		tmux kill-session -t "$SESSION" 2>/dev/null
+	fi
 }
 trap cleanup EXIT
 
@@ -77,9 +82,6 @@ screen:Main=PID M_VIRT M_RESIDENT M_SHARE STATE PERCENT_CPU PERCENT_MEM TIME ELA
 .all_branches_collapsed=0
 EOF
 
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-	tmux kill-session -t "$SESSION" 2>/dev/null
-fi
 buf_size=65487
 method="xor"
 io_uring=0
@@ -146,11 +148,9 @@ tmux new-session -d -s "$SESSION" \
 	"exec socat -u -b $buf_size UDP-RECV:12345,bind=127.0.0.2,rcvbuf=33554432 \
             EXEC:\"/bin/pv -B$buf_size -k -8 -b -t -r -p -X\""
 
-tmux set-hook -t "$SESSION" client-detached \
-	"if -F '#{==:#{session_attached},0}' 'kill-session -t $SESSION'"
-
 tmux set-option -g prefix None
 tmux set-option status off
+tmux bind-key -n C-c kill-session
 tmux bind-key -n q kill-session
 
 tmux new-window -d -t "$SESSION" \
@@ -161,6 +161,7 @@ tmux select-window -t "$SESSION":0
 tmux split-window -v \
 	"sh -c \"\"$TARGET_DIR\"/release/xor \
             -l127.0.0.1:12345 -r127.0.0.2:12345 -t0x30 -o5 -m$mtu_size $method_opt; sleep infinity\""
+tmux bind-key -n k send-keys -t 0.1 C-c
 
 tmux split-window -v \
 	"exec env XDG_CONFIG_HOME=\"$HTOP_TEMP_DIR\" htop \
