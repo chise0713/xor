@@ -64,6 +64,9 @@ unsafe fn xor(ptr: *mut u8, n: &usize) {
 
 #[cfg(all(test, feature = "bench"))]
 mod bench {
+    // NOTE: SIMD path uses AlignBox intentionally to reflect real-world
+    // aligned allocation requirements. This benchmark measures end-to-end
+    // cost/benefit rather than pure instruction throughput.
     extern crate test;
 
     use test::Bencher;
@@ -71,52 +74,30 @@ mod bench {
     use super::XorToken;
     use crate::{K, buf_pool::AlignBox};
 
-    const TEST_ITER: usize = K;
-
     const N: usize = 16 * K;
     const TOKEN: u8 = 0xFF;
 
-    #[inline(always)]
-    fn bench(ptr: *mut u8, xor: fn(*mut u8, usize, u8)) {
-        use std::{
-            hint,
-            sync::{atomic, atomic::Ordering},
-        };
-        // pin LLVM optimization path to prevent cross-call folding
-        let pin = || {
-            hint::black_box(ptr);
-            atomic::compiler_fence(Ordering::SeqCst);
-        };
-        (0..TEST_ITER).for_each(|_| {
-            xor(ptr, N, TOKEN);
-            pin();
-            xor(ptr, N, TOKEN);
-            pin();
-        })
+    fn bench<F: Fn(*mut u8)>(ptr: *mut u8, f: F) {
+        f(ptr);
+        std::hint::black_box(ptr);
     }
 
     #[bench]
     fn simd(b: &mut Bencher) {
-        #[inline(always)]
-        fn xor(ptr: *mut u8, n: usize, _: u8) {
-            unsafe { super::xor(ptr, &n) };
-        }
         let mut data = AlignBox::new(N);
         let ptr = data.as_mut_ptr();
         XorToken::set(TOKEN).unwrap();
-        b.iter(|| bench(ptr, xor));
+        b.iter(|| bench(ptr, |ptr| unsafe { super::xor(ptr, &N) }));
     }
 
     #[bench]
     fn normal(b: &mut Bencher) {
-        #[inline(always)]
-        fn xor(ptr: *mut u8, n: usize, token: u8) {
-            (0..n).for_each(|i| unsafe {
-                *ptr.add(i) ^= token;
-            });
-        }
         let mut data = unsafe { Box::new_zeroed_slice(N).assume_init() };
         let ptr: *mut u8 = data.as_mut_ptr();
-        b.iter(|| bench(ptr, xor));
+        b.iter(|| {
+            bench(ptr, |ptr| {
+                (0..N).for_each(|i| unsafe { *ptr.add(i) ^= TOKEN });
+            })
+        });
     }
 }
