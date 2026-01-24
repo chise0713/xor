@@ -127,7 +127,7 @@ impl MethodImpl for DnsPad {
             core::ptr::copy(ptr.cast_const(), ptr.add(DNS_QUERY_LEN), *n);
             core::ptr::copy(DNS_QUERY.as_ptr(), ptr, DNS_QUERY_LEN);
         };
-        *n = n.saturating_add(DNS_QUERY_LEN)
+        *n += DNS_QUERY_LEN
     }
 
     #[inline(always)]
@@ -136,6 +136,6 @@ impl MethodImpl for DnsPad {
         unsafe {
             core::ptr::copy(ptr.add(DNS_QUERY_LEN), ptr, *n);
         };
-        *n = n.saturating_sub(DNS_QUERY_LEN)
+        *n -= DNS_QUERY_LEN
     }
 }

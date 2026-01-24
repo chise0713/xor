@@ -3,7 +3,7 @@ use std::{io::ErrorKind, net::SocketAddr, sync::atomic::Ordering};
 use log::{Level, error, log_enabled, warn};
 use log_limit::warn_limit_global;
 
-use self::mode::Mode;
+use self::mode::{Mode, Modes};
 use crate::{
     N, WARN_LIMIT_DUR,
     buf_pool::BufPool,
@@ -18,25 +18,42 @@ use crate::{
 
 pub mod mode {
     // idea stole from GPT
-    pub trait Mode: private::Sealed {
-        const IS_LOCAL: bool;
+    #[repr(u8)]
+    pub enum Modes {
+        Inbound,
+        Outbound,
     }
 
-    pub struct Local;
-    pub struct Remote;
+    #[expect(private_bounds)]
+    pub trait Mode: sealed::Sealed {
+        const MODE: u8;
 
-    impl Mode for Local {
-        const IS_LOCAL: bool = true;
+        #[inline(always)]
+        fn mode() -> Modes {
+            match Self::MODE {
+                0 => Modes::Inbound,
+                1 => Modes::Outbound,
+                _ => unimplemented!(),
+            }
+        }
     }
 
-    impl Mode for Remote {
-        const IS_LOCAL: bool = false;
+    pub struct Inbound;
+
+    impl Mode for Inbound {
+        const MODE: u8 = 0;
     }
 
-    mod private {
-        pub trait Sealed {}
-        impl Sealed for super::Local {}
-        impl Sealed for super::Remote {}
+    pub struct Outbound;
+
+    impl Mode for Outbound {
+        const MODE: u8 = 1;
+    }
+
+    mod sealed {
+        pub(super) trait Sealed {}
+        impl Sealed for super::Inbound {}
+        impl Sealed for super::Outbound {}
     }
 }
 
@@ -52,13 +69,13 @@ impl RecvSend {
         method: Method,
         cached_local: &SocketAddr,
     ) {
-        let is_local = !M::IS_LOCAL;
+        let is_outbound = matches!(M::mode(), Modes::Outbound);
         match method {
             Method::DnsPad | Method::DnsUnPad => {
-                // do apply at `Socket::Remote.send()` to peer
-                // other vise undo peer apply and `Socket::Local.send_to()`
-                let do_apply = matches!(method, Method::DnsPad) ^ is_local;
-                if do_apply {
+                // do apply at `Socket::Outbound.send()` to peer
+                // other vise undo peer apply and `Socket::Inbound.send_to()`
+                let apply = matches!(method, Method::DnsPad) ^ is_outbound;
+                if apply {
                     if !dns_pad::runtime_apply_check(buf.len(), n) {
                         warn!("dns pad overflow: cap={}, n={n}", buf.len());
                         return;
@@ -79,7 +96,9 @@ impl RecvSend {
             }
         }
 
-        if let Err(e) = if is_local {
+        // Socket::Inbound.recv_from() -> process -> Socket::Outbound.send()
+        // Socket::Outbound.recv() -> process -> Socket::Inbound.send_to()
+        if let Err(e) = if is_outbound {
             socket.try_send_to(&buf[..n], *cached_local)
         } else {
             socket.try_send(&buf[..n])
@@ -98,10 +117,9 @@ impl RecvSend {
     }
 
     pub async fn recv<M: Mode>(&self) {
-        let socket = if M::IS_LOCAL {
-            Socket::Local
-        } else {
-            Socket::Remote
+        let socket = match M::mode() {
+            Modes::Inbound => Socket::Inbound,
+            Modes::Outbound => Socket::Outbound,
         };
         let mut local_ver = 0;
         let mut cached_local = NULL_SOCKET_ADDR;
@@ -138,18 +156,18 @@ impl RecvSend {
         cached_local: &mut SocketAddr,
         local_ver: &mut usize,
     ) -> bool {
-        if M::IS_LOCAL {
-            self.local_additional(addr, cached_local, local_ver)
+        if matches!(M::mode(), Modes::Inbound) {
+            self.inbound_additional(addr, cached_local, local_ver)
         } else {
-            self.remote_additional(addr, cached_local, local_ver)
+            self.outbound_additional(cached_local, local_ver)
         }
     }
 
-    // `&cached_local` will be sync in `RecvSend::<Remote>`
-    // see `self.remote_addtional()`
+    // `&cached_local` will be sync in `RecvSend::<Outbound>`
+    // see `self.outbound_addtional()`
     #[must_use]
     #[inline(never)]
-    fn local_additional(
+    fn inbound_additional(
         &self,
         addr: &SocketAddr,
         cached_local: &mut SocketAddr,
@@ -175,14 +193,9 @@ impl RecvSend {
     }
 
     // `&cached_local` will be pass into send
-    // Socket::Local.try_send_to(buf, addr)
+    // Socket::Inbound.try_send_to(buf, addr)
     #[must_use]
-    fn remote_additional(
-        &self,
-        _: &SocketAddr,
-        cached_local: &mut SocketAddr,
-        local_ver: &mut usize,
-    ) -> bool {
+    fn outbound_additional(&self, cached_local: &mut SocketAddr, local_ver: &mut usize) -> bool {
         if LocalAddr::updated(local_ver) {
             *cached_local = LocalAddr::current();
         }

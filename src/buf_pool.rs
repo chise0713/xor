@@ -102,7 +102,7 @@ impl BufPool {
             }
             Err(TryAcquireError::NoPermits) => {
                 warn_limit_global!(1, WARN_LIMIT_DUR, "semaphore backpressure");
-                Semaphore.acquire().await.unwrap()
+                Semaphore.acquire().await.ok()?
             }
         };
         let inner = ManuallyDrop::new(BpSealed.pop().expect("semaphore permits mismatch!"));

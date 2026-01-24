@@ -205,17 +205,17 @@ struct AsyncMain {
 impl AsyncMain {
     #[inline(always)]
     async fn enter(self) -> Result<ExitCode> {
-        use crate::recv_send::mode::{Local, Remote};
+        use crate::recv_send::mode::{Inbound, Outbound};
 
         self.sockets.convert()?;
 
         let mut join_set = JoinSet::new();
         (0..self.worker_threads).for_each(|_| {
-            join_set.spawn(RecvSend.recv::<Remote>());
-            join_set.spawn(RecvSend.recv::<Local>());
+            join_set.spawn(RecvSend.recv::<Outbound>());
+            join_set.spawn(RecvSend.recv::<Inbound>());
         });
         let local_set = LocalSet::new();
-        join_set.spawn_local_on(RecvSend.recv::<Remote>(), &local_set);
+        join_set.spawn_local_on(RecvSend.recv::<Outbound>(), &local_set);
 
         info!("service started");
 
@@ -231,7 +231,7 @@ impl AsyncMain {
             _ = join_set.join_next() => {
                 net_fail = true;
             },
-            _ = local_set.run_until(RecvSend.recv::<Local>()) => {
+            _ = local_set.run_until(RecvSend.recv::<Inbound>()) => {
                 net_fail = true;
             }
         }

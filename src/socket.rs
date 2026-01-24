@@ -21,8 +21,8 @@ static REMOTE_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
 #[repr(usize)]
 #[derive(Debug, Clone, Copy)]
 pub enum Socket {
-    Local,
-    Remote,
+    Inbound,
+    Outbound,
 }
 
 impl Deref for Socket {
@@ -34,8 +34,8 @@ impl Deref for Socket {
             CTX = "Socket: " + INIT
         };
         match *self {
-            Socket::Local => LOCAL_SOCKET.get().expect(&CTX),
-            Socket::Remote => REMOTE_SOCKET.get().expect(&CTX),
+            Socket::Inbound => LOCAL_SOCKET.get().expect(&CTX),
+            Socket::Outbound => REMOTE_SOCKET.get().expect(&CTX),
         }
     }
 }
@@ -46,8 +46,8 @@ impl Not for Socket {
     #[inline(always)]
     fn not(self) -> Self::Output {
         match self {
-            Socket::Local => Socket::Remote,
-            Socket::Remote => Socket::Local,
+            Socket::Inbound => Socket::Outbound,
+            Socket::Outbound => Socket::Inbound,
         }
     }
 }
@@ -56,8 +56,8 @@ impl Display for Socket {
     #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Local => "local",
-            Self::Remote => "remote",
+            Self::Inbound => "inbound",
+            Self::Outbound => "outbound",
         })
     }
 }
