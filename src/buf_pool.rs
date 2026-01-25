@@ -12,7 +12,7 @@ use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
 use crossbeam_utils::CachePadded;
 use log_limit::warn_limit_global;
-use tokio::sync::{Semaphore as SP, SemaphorePermit, TryAcquireError};
+use tokio::sync::{Semaphore as SP, TryAcquireError};
 use wide::u64x8;
 
 use self::sealed::BpSealed;
@@ -95,8 +95,8 @@ impl BufPool {
     }
 
     pub async fn acquire() -> Option<LeasedBuf> {
-        let _p = match Semaphore.try_acquire() {
-            Ok(_p) => _p,
+        match Semaphore.try_acquire() {
+            Ok(permit) => permit,
             Err(TryAcquireError::Closed) => {
                 return None;
             }
@@ -104,16 +104,17 @@ impl BufPool {
                 warn_limit_global!(1, WARN_LIMIT_DUR, "semaphore backpressure");
                 Semaphore.acquire().await.ok()?
             }
-        };
+        }
+        .forget();
         let inner = ManuallyDrop::new(BpSealed.pop().expect("semaphore permits mismatch!"));
 
-        Some(LeasedBuf { inner, _p })
+        Some(LeasedBuf { inner })
     }
 }
 
+#[repr(transparent)]
 pub struct LeasedBuf {
     inner: ManuallyDrop<AlignBox>,
-    _p: SemaphorePermit<'static>,
 }
 
 impl Deref for LeasedBuf {
@@ -136,6 +137,7 @@ impl Drop for LeasedBuf {
     fn drop(&mut self) {
         let buf = unsafe { ManuallyDrop::take(&mut self.inner) };
         BpSealed.push(buf).ok().expect(PUSH_FAILURE);
+        Semaphore.add_permits(1);
     }
 }
 
