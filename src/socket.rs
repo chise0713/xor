@@ -15,8 +15,8 @@ use crate::{INIT, M, ONCE, const_concat};
 const RECV_BUF_SIZE: usize = 32 * M;
 const SEND_BUF_SIZE: usize = RECV_BUF_SIZE;
 
-static LOCAL_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
-static REMOTE_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
+static INBOUND_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
+static OUTBOUND_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
 
 #[repr(usize)]
 #[derive(Debug, Clone, Copy)]
@@ -34,8 +34,8 @@ impl Deref for Socket {
             CTX = "Socket: " + INIT
         };
         match *self {
-            Socket::Inbound => LOCAL_SOCKET.get().expect(&CTX),
-            Socket::Outbound => REMOTE_SOCKET.get().expect(&CTX),
+            Socket::Inbound => INBOUND_SOCKET.get().expect(&CTX),
+            Socket::Outbound => OUTBOUND_SOCKET.get().expect(&CTX),
         }
     }
 }
@@ -112,10 +112,10 @@ impl Sockets {
             };
             Error::new(ErrorKind::AlreadyExists, CTX.as_str())
         };
-        LOCAL_SOCKET
+        INBOUND_SOCKET
             .set(UdpSocket::from_std(self.local)?)
             .map_err(exist)?;
-        REMOTE_SOCKET
+        OUTBOUND_SOCKET
             .set(UdpSocket::from_std(self.remote)?)
             .map_err(exist)?;
         Ok(())

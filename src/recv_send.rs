@@ -20,8 +20,8 @@ pub mod mode {
     // idea stole from GPT
     #[repr(u8)]
     pub enum Modes {
-        Inbound,
-        Outbound,
+        Inbound = 0,
+        Outbound = 1,
     }
 
     #[expect(private_bounds)]
@@ -69,13 +69,12 @@ impl RecvSend {
         method: Method,
         cached_local: &SocketAddr,
     ) {
-        let is_outbound = matches!(M::mode(), Modes::Outbound);
+        let from_outbound = matches!(M::mode(), Modes::Outbound);
         match method {
             Method::DnsPad | Method::DnsUnPad => {
                 // do apply at `Socket::Outbound.send()` to peer
                 // other vise undo peer apply and `Socket::Inbound.send_to()`
-                let apply = matches!(method, Method::DnsPad) ^ is_outbound;
-                if apply {
+                if matches!(method, Method::DnsPad) ^ from_outbound {
                     if !dns_pad::runtime_apply_check(buf.len(), n) {
                         warn!("dns pad overflow: cap={}, n={n}", buf.len());
                         return;
@@ -98,14 +97,14 @@ impl RecvSend {
 
         // Socket::Inbound.recv_from() -> process -> Socket::Outbound.send()
         // Socket::Outbound.recv() -> process -> Socket::Inbound.send_to()
-        if let Err(e) = if is_outbound {
+        if let Err(e) = if from_outbound {
             socket.try_send_to(&buf[..n], *cached_local)
         } else {
             socket.try_send(&buf[..n])
         } {
             match e.kind() {
                 ErrorKind::WouldBlock => {
-                    warn_limit_global!(1, WARN_LIMIT_DUR, "{socket} tx full, drop");
+                    warn_limit_global!(1, WARN_LIMIT_DUR, "{socket} tx full, dropping");
                 }
                 _ => {
                     if Shutdown::try_request() {
