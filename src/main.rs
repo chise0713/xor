@@ -162,16 +162,20 @@ fn main() -> Result<ExitCode> {
         .map(NonZero::get)
         .unwrap_or_default();
     let worker_threads = total_threads.saturating_sub(MAIN_THREAD);
-    let rt = Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(WORKER_STACK_SIZE)
-        .thread_name_fn(move || {
-            static ID: AtomicUsize = AtomicUsize::new(0);
-            let id = ID.fetch_add(1, Ordering::SeqCst);
-            format!("{method}-{id}")
-        })
-        .worker_threads(worker_threads)
-        .build()?;
+    let rt = if worker_threads == 0 {
+        Builder::new_current_thread().enable_all().build()?
+    } else {
+        Builder::new_multi_thread()
+            .enable_all()
+            .thread_stack_size(WORKER_STACK_SIZE)
+            .thread_name_fn(move || {
+                static ID: AtomicUsize = AtomicUsize::new(0);
+                let id = ID.fetch_add(1, Ordering::SeqCst);
+                format!("{method}-{id}")
+            })
+            .worker_threads(worker_threads)
+            .build()?
+    };
 
     let sockets = Sockets::new(&listen_address, &remote_address)?;
     BgClock::new(CORASETIME_UPDATE).start()?;
