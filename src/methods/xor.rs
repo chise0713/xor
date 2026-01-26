@@ -46,6 +46,9 @@ impl MethodImpl for Xor {
 unsafe fn xor(ptr: *mut u8, n: &usize) {
     super::align_check(ptr.addr());
     let (token, simd) = XorToken::get();
+    if token == 0 {
+        return;
+    }
 
     let n_simd = *n / SIMD_WIDTH;
     let data: &mut [u64x8] = unsafe { slice::from_raw_parts_mut(ptr.cast(), n_simd) };

@@ -31,11 +31,12 @@ impl Deref for Socket {
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         const_concat! {
-            CTX = "Socket: " + INIT
+            CTX_I = "Socket::Inbound: " + INIT,
+            CTX_O = "Socket::Outbound: " + INIT
         };
         match *self {
-            Socket::Inbound => INBOUND_SOCKET.get().expect(&CTX),
-            Socket::Outbound => OUTBOUND_SOCKET.get().expect(&CTX),
+            Socket::Inbound => INBOUND_SOCKET.get().expect(&CTX_I),
+            Socket::Outbound => OUTBOUND_SOCKET.get().expect(&CTX_O),
         }
     }
 }

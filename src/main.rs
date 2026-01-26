@@ -40,9 +40,10 @@ use crate::{
 
 macro_rules! tinystr_const {
     { $($name:ident = $str:literal),* $(,)? } => {
+        use ::tinystr::TinyAsciiStr as TAS;
         $(
-            const $name: ::tinystr::TinyAsciiStr<{ $str.len() }> = {
-                match ::tinystr::TinyAsciiStr::try_from_str($str) {
+            const $name: TAS<{ $str.len() }> = {
+                match TAS::try_from_str($str) {
                     Ok(s) => s,
                     Err(_) => panic!(concat!("failed to construct tinystr from \"", $str, "\"")),
                 }
@@ -58,12 +59,13 @@ tinystr_const! {
 
 #[macro_export]
 macro_rules! const_concat {
-    ($name:ident = $prefix:literal + $suffix:expr) => {
-        const $name: ::tinystr::TinyAsciiStr<{ $prefix.len() + $suffix.len() }> = {
-            // all as `const` to avoid runtime computation
-            const SUFFIX: ::tinystr::TinyAsciiStr<{ $suffix.len() }> = $suffix;
-            const BASE: ::tinystr::TinyAsciiStr<{ $prefix.len() }> =
-                match ::tinystr::TinyAsciiStr::try_from_str($prefix) {
+    { $($name:ident = $prefix:literal + $suffix:expr),* $(,)? } => {
+        use ::tinystr::TinyAsciiStr as TAS;
+        $(
+            const $name: TAS<{ $prefix.len() + $suffix.len() }> = {
+                // all as `const` to avoid runtime computation
+                const SUFFIX: TAS<{ $suffix.len() }> = $suffix;
+                const BASE: TAS<{ $prefix.len() }> = match TAS::try_from_str($prefix) {
                     Ok(s) => s,
                     Err(_) => panic!(concat!(
                         "failed to construct tinystr from \"",
@@ -71,8 +73,9 @@ macro_rules! const_concat {
                         "\""
                     )),
                 };
-            BASE.concat(SUFFIX)
-        };
+                BASE.concat(SUFFIX)
+            };
+        )*
     };
 }
 
