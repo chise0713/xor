@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::Result;
+use bumpalo::Bump;
 use crossbeam_queue::ArrayQueue;
 use crossbeam_utils::CachePadded;
 use log_limit::warn_limit_global;
@@ -35,12 +36,36 @@ pub const CACHELINE_ALIGN: usize = size_of::<AlignBox>();
 unsafe impl Send for AlignBox {}
 
 impl AlignBox {
+    #[inline(always)]
+    fn align() -> usize {
+        CACHELINE_ALIGN.max(SIMD_WIDTH)
+    }
+
+    #[inline(always)]
+    fn padded_len(size: usize) -> usize {
+        size.div_ceil(SIMD_WIDTH) * SIMD_WIDTH
+    }
+
+    #[inline(always)]
+    fn layout(size: usize) -> Layout {
+        Layout::from_size_align(Self::padded_len(size), Self::align()).unwrap()
+    }
+
+    #[cfg(feature = "bench")]
     pub fn new(size: usize) -> Self {
-        let align_size = CACHELINE_ALIGN.max(SIMD_WIDTH);
-        let padded_len = size.div_ceil(SIMD_WIDTH) * SIMD_WIDTH;
-        let layout = Layout::from_size_align(padded_len, align_size).unwrap();
+        let padded_len = Self::padded_len(size);
+        let layout = Self::layout(size);
         let raw_ptr = unsafe { alloc::alloc_zeroed(layout) };
         let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
+        Self {
+            inner: CachePadded::new(Inner { ptr, padded_len }),
+        }
+    }
+
+    fn new_bump(size: usize, bump: &Bump) -> Self {
+        let padded_len = Self::padded_len(size);
+        let ptr = bump.alloc_layout(Self::layout(size));
+        unsafe { ptr.write_bytes(0, padded_len) };
         Self {
             inner: CachePadded::new(Inner { ptr, padded_len }),
         }
@@ -82,10 +107,12 @@ impl BufPool {
         if BUF_POOL.set(ArrayQueue::new(limit)).is_err() {
             return Err(Error::new(ErrorKind::AlreadyExists, ONCE.as_str()))?;
         };
+        let total = limit * AlignBox::padded_len(payload_max);
+        let bump = ManuallyDrop::new(Bump::with_capacity(total));
 
         (0..limit).for_each(|_| {
             BpSealed
-                .push(AlignBox::new(payload_max))
+                .push(AlignBox::new_bump(payload_max, &bump))
                 .ok()
                 .expect(PUSH_FAILURE)
         });
