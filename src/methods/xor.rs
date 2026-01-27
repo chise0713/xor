@@ -38,24 +38,24 @@ pub struct Xor;
 impl MethodImpl for Xor {
     #[inline(always)]
     unsafe fn apply(ptr: *mut u8, n: &mut usize) {
-        unsafe { xor(ptr, n) }
+        unsafe { xor(ptr, *n) }
     }
 }
 
 #[inline(always)]
-unsafe fn xor(ptr: *mut u8, n: &usize) {
+unsafe fn xor(ptr: *mut u8, n: usize) {
     super::align_check(ptr.addr());
     let (token, simd) = XorToken::get();
     if token == 0 {
         return;
     }
 
-    let n_simd = *n / SIMD_WIDTH;
+    let n_simd = n / SIMD_WIDTH;
     let data: &mut [u64x8] = unsafe { slice::from_raw_parts_mut(ptr.cast(), n_simd) };
 
     data.iter_mut().for_each(|chunk| *chunk ^= simd);
 
-    let rem = *n % SIMD_WIDTH;
+    let rem = n % SIMD_WIDTH;
     if rem == 0 {
         return;
     }
@@ -90,7 +90,7 @@ mod bench {
         let mut data = AlignBox::new(N);
         let ptr = data.as_mut_ptr();
         XorToken::set(TOKEN).unwrap();
-        b.iter(|| bench(ptr, |ptr| unsafe { super::xor(ptr, &N) }));
+        b.iter(|| bench(ptr, |ptr| unsafe { super::xor(ptr, N) }));
     }
 
     #[bench]

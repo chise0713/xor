@@ -1,7 +1,6 @@
 use std::{
     alloc::{self, Layout},
     io::{Error, ErrorKind},
-    mem::ManuallyDrop,
     ops::{Deref, DerefMut},
     ptr::NonNull,
     slice,
@@ -9,35 +8,27 @@ use std::{
 };
 
 use anyhow::Result;
-use bumpalo::Bump;
 use crossbeam_queue::ArrayQueue;
 use crossbeam_utils::CachePadded;
 use log_limit::warn_limit_global;
 use tokio::sync::{Semaphore as SP, TryAcquireError};
 use wide::u64x8;
 
-use self::sealed::BpSealed;
+use self::sealed::{BpSealed, PoolInner};
 use crate::{INIT, ONCE, WARN_LIMIT_DUR, const_concat};
 
 pub const SIMD_WIDTH: usize = size_of::<u64x8>();
 
-struct Inner {
+pub struct AlignBox {
     ptr: NonNull<u8>,
     padded_len: usize,
 }
 
-#[repr(transparent)]
-pub struct AlignBox {
-    inner: CachePadded<Inner>,
-}
-
-pub const CACHELINE_ALIGN: usize = size_of::<AlignBox>();
-
-unsafe impl Send for AlignBox {}
+pub const CACHELINE_ALIGN: usize = size_of::<CachePadded<Box<()>>>();
 
 impl AlignBox {
     #[inline(always)]
-    fn align() -> usize {
+    pub fn align() -> usize {
         CACHELINE_ALIGN.max(SIMD_WIDTH)
     }
 
@@ -51,32 +42,19 @@ impl AlignBox {
         Layout::from_size_align(Self::padded_len(size), Self::align()).unwrap()
     }
 
-    #[cfg(feature = "bench")]
     pub fn new(size: usize) -> Self {
         let padded_len = Self::padded_len(size);
         let layout = Self::layout(size);
         let raw_ptr = unsafe { alloc::alloc_zeroed(layout) };
         let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
-        Self {
-            inner: CachePadded::new(Inner { ptr, padded_len }),
-        }
-    }
-
-    fn new_bump(size: usize, bump: &Bump) -> Self {
-        let padded_len = Self::padded_len(size);
-        let ptr = bump.alloc_layout(Self::layout(size));
-        unsafe { ptr.write_bytes(0, padded_len) };
-        Self {
-            inner: CachePadded::new(Inner { ptr, padded_len }),
-        }
+        Self { ptr, padded_len }
     }
 }
 
 impl Drop for AlignBox {
     fn drop(&mut self) {
-        let align_size = CACHELINE_ALIGN.max(SIMD_WIDTH);
-        let layout = Layout::from_size_align(self.inner.padded_len, align_size).unwrap();
-        unsafe { alloc::dealloc(self.inner.ptr.as_ptr(), layout) }
+        let layout = Layout::from_size_align(self.padded_len, Self::align()).unwrap();
+        unsafe { alloc::dealloc(self.ptr.as_ptr(), layout) }
     }
 }
 
@@ -85,18 +63,18 @@ impl Deref for AlignBox {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        unsafe { slice::from_raw_parts(self.inner.ptr.as_ptr(), self.inner.padded_len) }
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.padded_len) }
     }
 }
 
 impl DerefMut for AlignBox {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { slice::from_raw_parts_mut(self.inner.ptr.as_ptr(), self.inner.padded_len) }
+        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.padded_len) }
     }
 }
 
-static BUF_POOL: OnceLock<ArrayQueue<AlignBox>> = OnceLock::new();
+static BUF_POOL: OnceLock<PoolInner> = OnceLock::new();
 
 const PUSH_FAILURE: &str = "failed to push BufPool";
 
@@ -104,17 +82,15 @@ pub struct BufPool;
 
 impl BufPool {
     pub fn init(limit: usize, payload_max: usize) -> Result<()> {
-        if BUF_POOL.set(ArrayQueue::new(limit)).is_err() {
+        let stride = AlignBox::padded_len(payload_max);
+        let slab = AlignBox::new(limit * stride);
+
+        if BUF_POOL.set(PoolInner::new(limit, slab, stride)).is_err() {
             return Err(Error::new(ErrorKind::AlreadyExists, ONCE.as_str()))?;
         };
-        let total = limit * AlignBox::padded_len(payload_max);
-        let bump = ManuallyDrop::new(Bump::with_capacity(total));
 
-        (0..limit).for_each(|_| {
-            BpSealed
-                .push(AlignBox::new_bump(payload_max, &bump))
-                .ok()
-                .expect(PUSH_FAILURE)
+        (0..limit).for_each(|i| {
+            BpSealed.push(i).expect(PUSH_FAILURE);
         });
 
         Semaphore.add_permits(limit);
@@ -133,37 +109,37 @@ impl BufPool {
             }
         }
         .forget();
-        let inner = ManuallyDrop::new(BpSealed.pop().expect("semaphore permits mismatch!"));
 
-        Some(LeasedBuf { inner })
+        BpSealed.pop()
     }
 }
 
-#[repr(transparent)]
 pub struct LeasedBuf {
-    inner: ManuallyDrop<AlignBox>,
+    ptr: NonNull<u8>,
+    meta: usize,
 }
+
+unsafe impl Send for LeasedBuf {}
 
 impl Deref for LeasedBuf {
     type Target = [u8];
 
     #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+    fn deref(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), BpSealed.stride()) }
     }
 }
 
 impl DerefMut for LeasedBuf {
     #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+    fn deref_mut(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), BpSealed.stride()) }
     }
 }
 
 impl Drop for LeasedBuf {
     fn drop(&mut self) {
-        let buf = unsafe { ManuallyDrop::take(&mut self.inner) };
-        BpSealed.push(buf).ok().expect(PUSH_FAILURE);
+        BpSealed.push(self.meta).expect(PUSH_FAILURE);
         Semaphore.add_permits(1);
     }
 }
@@ -173,7 +149,7 @@ mod sealed {
     pub(super) struct BpSealed;
 
     impl Deref for BpSealed {
-        type Target = ArrayQueue<AlignBox>;
+        type Target = PoolInner;
 
         #[inline(always)]
         fn deref(&self) -> &Self::Target {
@@ -183,6 +159,41 @@ mod sealed {
             BUF_POOL.get().expect(&CTX)
         }
     }
+
+    pub(super) struct PoolInner {
+        available: ArrayQueue<usize>,
+        slab: AlignBox,
+        stride: usize,
+    }
+
+    impl PoolInner {
+        pub(super) fn new(available: usize, slab: AlignBox, stride: usize) -> Self {
+            Self {
+                available: ArrayQueue::new(available),
+                slab,
+                stride,
+            }
+        }
+
+        pub(super) fn push(&self, meta: usize) -> Result<(), usize> {
+            self.available.push(meta)
+        }
+
+        pub(super) fn pop(&self) -> Option<LeasedBuf> {
+            let meta = self.available.pop()?;
+            let offset = meta * self.stride;
+            let ptr = NonNull::new(unsafe { self.slab.as_ptr().add(offset).cast_mut() })?;
+            Some(LeasedBuf { ptr, meta })
+        }
+
+        #[inline(always)]
+        pub(super) fn stride(&self) -> usize {
+            self.stride
+        }
+    }
+
+    unsafe impl Send for PoolInner {}
+    unsafe impl Sync for PoolInner {}
 }
 
 static POOL_SEM: SP = SP::const_new(0);

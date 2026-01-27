@@ -95,11 +95,15 @@ pub struct Started;
 
 impl Started {
     #[inline(always)]
-    pub fn now() {
-        const_concat! {
-           CTX = "Socket::now(): " + ONCE
+    pub fn now() -> Result<()> {
+        let exist = |_| {
+            const_concat! {
+               CTX = "Socket::now(): " + ONCE
+            };
+            Error::new(ErrorKind::AlreadyExists, CTX.as_str())
         };
-        START.set(Instant::now()).expect(&CTX)
+        START.set(Instant::now()).map_err(exist)?;
+        Ok(())
     }
 
     #[inline(always)]

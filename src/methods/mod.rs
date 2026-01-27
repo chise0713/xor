@@ -10,9 +10,14 @@ macro_rules! use_impl_struct {
 }
 use_impl_struct!(xor, dns_pad);
 
-use std::{fmt::Display, str::FromStr, sync::OnceLock};
+use std::{
+    fmt::Display,
+    io::{Error, ErrorKind},
+    str::FromStr,
+    sync::OnceLock,
+};
 
-use anyhow::bail;
+use anyhow::{Result, bail};
 
 use crate::{INIT, ONCE, const_concat};
 
@@ -26,10 +31,10 @@ pub trait MethodImpl {
 
 #[inline(always)]
 fn align_check(ptr: usize) {
-    use crate::buf_pool::CACHELINE_ALIGN;
+    use crate::buf_pool::SIMD_WIDTH;
 
-    if !ptr.is_multiple_of(CACHELINE_ALIGN) {
-        unreachable!("buf must be {}B aligned", CACHELINE_ALIGN)
+    if !ptr.is_multiple_of(SIMD_WIDTH) {
+        unreachable!("buf must be {}B aligned", SIMD_WIDTH)
     }
 }
 
@@ -76,11 +81,16 @@ static CURRENT_METHOD: OnceLock<Method> = OnceLock::new();
 pub struct MethodState;
 
 impl MethodState {
-    pub fn set(method: Method) {
-        const_concat! {
-            CTX = "MethodState::set(): " + ONCE
-        }
-        CURRENT_METHOD.set(method).ok().expect(&CTX)
+    pub fn set(method: Method) -> Result<()> {
+        let exist = |_| {
+            const_concat! {
+                CTX = "MethodState::set(): " + ONCE
+            }
+            Error::new(ErrorKind::AlreadyExists, CTX.as_str())
+        };
+
+        CURRENT_METHOD.set(method).map_err(exist)?;
+        Ok(())
     }
 
     pub fn current() -> &'static Method {

@@ -1,6 +1,6 @@
 [package]
 name = "xor"
-version = "0.1.43"
+version = "0.1.44"
 edition = "2024"
 
 [features]
@@ -9,7 +9,6 @@ bench = []
 
 [dependencies]
 anyhow = "^1"
-bumpalo = "^3"
 coarsetime = "^0.1"
 crossbeam-queue = "^0.3"
 crossbeam-utils = "^0.8"
@@ -37,4 +36,4 @@ wide = "^1.1"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+panic = "unwind"

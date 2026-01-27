@@ -96,6 +96,7 @@ const WORKER_STACK_SIZE: usize = 256 * K;
 const WARN_LIMIT_DUR: Duration = Duration::from_millis(250);
 
 fn main() -> Result<ExitCode> {
+    // start parsing
     let Args {
         buffer_limit_usize,
         listen_address,
@@ -143,7 +144,9 @@ fn main() -> Result<ExitCode> {
             }) else {
                 return args::invalid_argument();
             };
-            XorToken::set(token)?;
+            if XorToken::set(token).is_err() {
+                return args::invalid_argument();
+            };
         }
 
         Method::DnsPad => {
@@ -154,7 +157,12 @@ fn main() -> Result<ExitCode> {
 
         Method::DnsUnPad => {}
     };
-    MethodState::set(method);
+    // end parsing
+
+    Logger::init();
+
+    info!("initializing..");
+    MethodState::set(method)?;
 
     const MAIN_THREAD: usize = 1;
     // zero worker when only main thread available
@@ -190,8 +198,7 @@ fn main() -> Result<ExitCode> {
         },
         payload_max,
     )?;
-    Logger::init();
-    Started::now();
+    Started::now()?;
 
     rt.block_on(
         AsyncMain {
