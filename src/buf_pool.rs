@@ -28,7 +28,7 @@ pub const CACHELINE_ALIGN: usize = size_of::<CachePadded<Box<()>>>();
 
 impl AlignBox {
     #[inline(always)]
-    pub fn align() -> usize {
+    fn align() -> usize {
         CACHELINE_ALIGN.max(SIMD_WIDTH)
     }
 
