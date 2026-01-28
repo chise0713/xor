@@ -21,12 +21,28 @@ use anyhow::{Result, bail};
 
 use crate::{INIT, ONCE, const_concat};
 
-pub trait MethodImpl {
-    unsafe fn apply(ptr: *mut u8, n: &mut usize);
-    #[inline(always)]
-    unsafe fn undo(ptr: *mut u8, n: &mut usize) {
-        unsafe { Self::apply(ptr, n) }
-    }
+pub trait MethodApply {
+    unsafe fn apply<P>(_proof: P, ptr: *mut u8, n: &mut usize)
+    where
+        P: ApplyProof<Method = Self>;
+}
+
+pub trait MethodUndo {
+    unsafe fn undo<P>(_proof: P, ptr: *mut u8, n: &mut usize)
+    where
+        P: UndoProof<Method = Self>;
+}
+
+/// temporary proof. if the buffer is mutated,
+/// then the proof is no-longer valuable
+pub trait ApplyProof {
+    type Method;
+}
+
+/// temporary proof. if the buffer is mutated,
+/// then the proof is no-longer valuable
+pub trait UndoProof {
+    type Method;
 }
 
 #[inline(always)]

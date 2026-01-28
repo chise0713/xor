@@ -3,7 +3,8 @@ use std::{slice, sync::OnceLock};
 use anyhow::Result;
 use wide::u64x8;
 
-use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, const_concat, methods::MethodImpl};
+use super::{ApplyProof, MethodApply};
+use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, const_concat};
 
 static TOKEN_U8: OnceLock<u8> = OnceLock::new();
 static TOKEN_SIMD: OnceLock<u64x8> = OnceLock::new();
@@ -33,11 +34,33 @@ impl XorToken {
     }
 }
 
+// ZST proof token with private field,
+// can only be constructed by the module
+mod proof {
+    use super::*;
+
+    pub struct XorApplyProof {
+        _token: (),
+    }
+
+    impl ApplyProof for XorApplyProof {
+        type Method = Xor;
+    }
+
+    impl Xor {
+        pub fn check_apply() -> Option<XorApplyProof> {
+            Some(XorApplyProof { _token: () })
+        }
+    }
+}
+
 pub struct Xor;
 
-impl MethodImpl for Xor {
-    #[inline(always)]
-    unsafe fn apply(ptr: *mut u8, n: &mut usize) {
+impl MethodApply for Xor {
+    unsafe fn apply<P>(_proof: P, ptr: *mut u8, n: &mut usize)
+    where
+        P: super::ApplyProof<Method = Self>,
+    {
         unsafe { xor(ptr, *n) }
     }
 }

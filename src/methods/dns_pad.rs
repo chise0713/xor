@@ -1,8 +1,7 @@
-// those header were wrote by gemini
-
-use crate::methods::MethodImpl;
+use super::{ApplyProof, MethodApply, MethodUndo, UndoProof};
 
 mod _s {
+    // those header were wrote by gemini
     pub const HEADER_LEN: usize = 12;
     // 1 byte (\x0C) + 12 bytes ("root-servers") +
     // 1 byte (\x03) + 3 bytes ("net") +
@@ -104,14 +103,36 @@ pub fn payload_bound_check(payload_max: usize) -> bool {
     payload_max > DNS_QUERY_LEN
 }
 
-#[inline(always)]
-pub fn runtime_apply_check(buf_len: usize, n: usize) -> bool {
-    buf_len > n + DNS_QUERY_LEN
-}
+// ZST proof token with private field,
+// can only be constructed by the module
+mod proof {
+    use super::*;
 
-#[inline(always)]
-pub fn runtime_undo_check(n: usize) -> bool {
-    n >= DNS_QUERY_LEN
+    pub struct DnsPadApplyProof {
+        _token: (),
+    }
+
+    impl ApplyProof for DnsPadApplyProof {
+        type Method = DnsPad;
+    }
+
+    pub struct DnsPadUndoProof {
+        _token: (),
+    }
+
+    impl UndoProof for DnsPadUndoProof {
+        type Method = DnsPad;
+    }
+
+    impl DnsPad {
+        pub fn check_apply(buf_len: usize, n: usize) -> Option<DnsPadApplyProof> {
+            (buf_len > n + DNS_QUERY_LEN).then_some(DnsPadApplyProof { _token: () })
+        }
+
+        pub fn check_undo(n: usize) -> Option<DnsPadUndoProof> {
+            (n >= DNS_QUERY_LEN).then_some(DnsPadUndoProof { _token: () })
+        }
+    }
 }
 
 // `local` -> self.apply() -> peer_padded
@@ -119,9 +140,12 @@ pub fn runtime_undo_check(n: usize) -> bool {
 // vice versa
 pub struct DnsPad;
 
-impl MethodImpl for DnsPad {
+impl MethodApply for DnsPad {
     #[inline(always)]
-    unsafe fn apply(ptr: *mut u8, n: &mut usize) {
+    unsafe fn apply<P>(_proof: P, ptr: *mut u8, n: &mut usize)
+    where
+        P: ApplyProof<Method = Self>,
+    {
         super::align_check(ptr.addr());
         let len = *n;
         unsafe {
@@ -130,9 +154,14 @@ impl MethodImpl for DnsPad {
         };
         *n = len + DNS_QUERY_LEN;
     }
+}
 
+impl MethodUndo for DnsPad {
     #[inline(always)]
-    unsafe fn undo(ptr: *mut u8, n: &mut usize) {
+    unsafe fn undo<P>(_proof: P, ptr: *mut u8, n: &mut usize)
+    where
+        P: UndoProof<Method = Self>,
+    {
         super::align_check(ptr.addr());
         let len = *n;
         unsafe {
