@@ -123,19 +123,21 @@ impl MethodImpl for DnsPad {
     #[inline(always)]
     unsafe fn apply(ptr: *mut u8, n: &mut usize) {
         super::align_check(ptr.addr());
+        let len = *n;
         unsafe {
-            core::ptr::copy(ptr.cast_const(), ptr.add(DNS_QUERY_LEN), *n);
+            core::ptr::copy(ptr.cast_const(), ptr.add(DNS_QUERY_LEN), len);
             core::ptr::copy(DNS_QUERY.as_ptr(), ptr, DNS_QUERY_LEN);
         };
-        *n += DNS_QUERY_LEN
+        *n = len + DNS_QUERY_LEN;
     }
 
     #[inline(always)]
     unsafe fn undo(ptr: *mut u8, n: &mut usize) {
         super::align_check(ptr.addr());
+        let len = *n;
         unsafe {
-            core::ptr::copy(ptr.add(DNS_QUERY_LEN), ptr, *n);
+            core::ptr::copy(ptr.add(DNS_QUERY_LEN), ptr, len);
         };
-        *n -= DNS_QUERY_LEN
+        *n = len - DNS_QUERY_LEN
     }
 }

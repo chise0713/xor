@@ -31,9 +31,10 @@ impl LocalAddr {
         LOCAL_ADDR_VERSION.load(Ordering::Relaxed)
     }
 
+    /// returns `false` when `glob_ver` equals to `ver`
     #[must_use]
     #[inline(always)]
-    pub fn updated(ver: &mut usize) -> bool {
+    pub fn check_and_update(ver: &mut usize) -> bool {
         let glob_ver = Self::version();
         if *ver != glob_ver {
             *ver = glob_ver;

@@ -11,7 +11,7 @@ static TOKEN_SIMD: OnceLock<u64x8> = OnceLock::new();
 pub struct XorToken;
 
 impl XorToken {
-    pub fn set(val: u8) -> Result<()> {
+    pub fn init(val: u8) -> Result<()> {
         const_concat! {
             CTX = "XorToken::set()" + ONCE
         };
@@ -80,17 +80,12 @@ mod bench {
     const N: usize = 16 * K;
     const TOKEN: u8 = 0xFF;
 
-    fn bench<F: Fn(*mut u8)>(ptr: *mut u8, f: F) {
-        f(ptr);
-        std::hint::black_box(ptr);
-    }
-
     #[bench]
     fn simd(b: &mut Bencher) {
         let mut data = AlignBox::new(N);
         let ptr = data.as_mut_ptr();
-        XorToken::set(TOKEN).unwrap();
-        b.iter(|| bench(ptr, |ptr| unsafe { super::xor(ptr, N) }));
+        XorToken::init(TOKEN).unwrap();
+        b.iter(|| unsafe { super::xor(ptr, N) });
     }
 
     #[bench]
@@ -98,9 +93,7 @@ mod bench {
         let mut data = unsafe { Box::new_zeroed_slice(N).assume_init() };
         let ptr: *mut u8 = data.as_mut_ptr();
         b.iter(|| {
-            bench(ptr, |ptr| {
-                (0..N).for_each(|i| unsafe { *ptr.add(i) ^= TOKEN });
-            })
+            (0..N).for_each(|i| unsafe { *ptr.add(i) ^= TOKEN });
         });
     }
 }

@@ -144,7 +144,7 @@ fn main() -> Result<ExitCode> {
             }) else {
                 return args::invalid_argument();
             };
-            if XorToken::set(token).is_err() {
+            if XorToken::init(token).is_err() {
                 return args::invalid_argument();
             };
         }

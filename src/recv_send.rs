@@ -67,7 +67,7 @@ impl RecvSend {
         mut n: usize,
         socket: Socket,
         method: Method,
-        cached_local: &SocketAddr,
+        cached_local: SocketAddr,
     ) {
         let from_outbound = matches!(M::mode(), Modes::Outbound);
         match method {
@@ -98,7 +98,7 @@ impl RecvSend {
         // Socket::Inbound.recv_from() -> process -> Socket::Outbound.send()
         // Socket::Outbound.recv() -> process -> Socket::Inbound.send_to()
         if let Err(e) = if from_outbound {
-            socket.try_send_to(&buf[..n], *cached_local)
+            socket.try_send_to(&buf[..n], cached_local)
         } else {
             socket.try_send(&buf[..n])
         } {
@@ -140,18 +140,18 @@ impl RecvSend {
                 N.fetch_max(n, Ordering::Relaxed);
             }
 
-            if self.additional::<M>(&addr, &mut cached_local, &mut cached_ver) {
+            if self.additional::<M>(addr, &mut cached_local, &mut cached_ver) {
                 continue;
             }
 
-            self.send::<M>(&mut buf, n, !socket, method, &cached_local);
+            self.send::<M>(&mut buf, n, !socket, method, cached_local);
         }
     }
 
     #[must_use]
     fn additional<M: Mode>(
         &self,
-        addr: &SocketAddr,
+        addr: SocketAddr,
         cached_local: &mut SocketAddr,
         cached_ver: &mut usize,
     ) -> bool {
@@ -162,28 +162,28 @@ impl RecvSend {
         }
     }
 
-    // `&cached_local` will be sync in `RecvSend::<Outbound>`
-    // see `self.outbound_addtional()`
+    /// `&cached_local` will be sync in `RecvSend::<Outbound>`
+    /// see `self.outbound_addtional()`
     #[must_use]
     #[inline(never)]
     fn inbound_additional(
         &self,
-        addr: &SocketAddr,
+        addr: SocketAddr,
         cached_local: &mut SocketAddr,
         cached_ver: &mut usize,
     ) -> bool {
         if !ConnectCtx::is_connected() {
-            ConnectCtx::connect(*addr);
-            *cached_local = *addr;
+            ConnectCtx::connect(addr);
+            *cached_local = addr;
             *cached_ver = LocalAddr::version();
             return false;
         }
 
-        if LocalAddr::updated(cached_ver) {
+        if LocalAddr::check_and_update(cached_ver) {
             *cached_local = LocalAddr::current();
         }
 
-        if addr == cached_local {
+        if addr == *cached_local {
             LastSeen::now();
             return false;
         }
@@ -191,11 +191,11 @@ impl RecvSend {
         self.mismatch(cached_local, addr)
     }
 
-    // `&cached_local` will be pass into send
-    // Socket::Inbound.try_send_to(buf, addr)
+    /// `&cached_local` will be pass into send
+    /// Socket::Inbound.try_send_to(buf, addr)
     #[must_use]
     fn outbound_additional(&self, cached_local: &mut SocketAddr, cached_ver: &mut usize) -> bool {
-        if LocalAddr::updated(cached_ver) {
+        if LocalAddr::check_and_update(cached_ver) {
             *cached_local = LocalAddr::current();
         }
         false
@@ -204,7 +204,7 @@ impl RecvSend {
     #[cold]
     #[must_use]
     #[inline(never)]
-    fn mismatch(&self, local: &SocketAddr, addr: &SocketAddr) -> bool {
+    fn mismatch(&self, local: &SocketAddr, addr: SocketAddr) -> bool {
         warn_limit_global!(1, WARN_LIMIT_DUR, "local={local}, current={addr}, dropping");
         true
     }

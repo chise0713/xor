@@ -2,5 +2,7 @@
     "terminal.integrated.env.linux": {
         "RUST_LOG": "trace",
     },
-    "rust-analyzer.cargo.features": []
+    "rust-analyzer.cargo.features": [
+        "bench"
+    ]
 }
