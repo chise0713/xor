@@ -81,7 +81,7 @@ static CURRENT_METHOD: OnceLock<Method> = OnceLock::new();
 pub struct MethodState;
 
 impl MethodState {
-    pub fn set(method: Method) -> Result<()> {
+    pub fn init(method: Method) -> Result<()> {
         let exist = |_| {
             const_concat! {
                 CTX = "MethodState::set(): " + ONCE

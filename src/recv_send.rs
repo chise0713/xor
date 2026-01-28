@@ -120,7 +120,7 @@ impl RecvSend {
             Modes::Inbound => Socket::Inbound,
             Modes::Outbound => Socket::Outbound,
         };
-        let mut local_ver = 0;
+        let mut cached_ver = 0;
         let mut cached_local = NULL_SOCKET_ADDR;
         let method = *MethodState::current();
         while !Shutdown::requested() {
@@ -140,7 +140,7 @@ impl RecvSend {
                 N.fetch_max(n, Ordering::Relaxed);
             }
 
-            if self.additional::<M>(&addr, &mut cached_local, &mut local_ver) {
+            if self.additional::<M>(&addr, &mut cached_local, &mut cached_ver) {
                 continue;
             }
 
@@ -153,12 +153,12 @@ impl RecvSend {
         &self,
         addr: &SocketAddr,
         cached_local: &mut SocketAddr,
-        local_ver: &mut usize,
+        cached_ver: &mut usize,
     ) -> bool {
         if matches!(M::mode(), Modes::Inbound) {
-            self.inbound_additional(addr, cached_local, local_ver)
+            self.inbound_additional(addr, cached_local, cached_ver)
         } else {
-            self.outbound_additional(cached_local, local_ver)
+            self.outbound_additional(cached_local, cached_ver)
         }
     }
 
@@ -170,16 +170,16 @@ impl RecvSend {
         &self,
         addr: &SocketAddr,
         cached_local: &mut SocketAddr,
-        local_ver: &mut usize,
+        cached_ver: &mut usize,
     ) -> bool {
         if !ConnectCtx::is_connected() {
             ConnectCtx::connect(*addr);
             *cached_local = *addr;
-            *local_ver = LocalAddr::version();
+            *cached_ver = LocalAddr::version();
             return false;
         }
 
-        if LocalAddr::updated(local_ver) {
+        if LocalAddr::updated(cached_ver) {
             *cached_local = LocalAddr::current();
         }
 
@@ -194,8 +194,8 @@ impl RecvSend {
     // `&cached_local` will be pass into send
     // Socket::Inbound.try_send_to(buf, addr)
     #[must_use]
-    fn outbound_additional(&self, cached_local: &mut SocketAddr, local_ver: &mut usize) -> bool {
-        if LocalAddr::updated(local_ver) {
+    fn outbound_additional(&self, cached_local: &mut SocketAddr, cached_ver: &mut usize) -> bool {
+        if LocalAddr::updated(cached_ver) {
             *cached_local = LocalAddr::current();
         }
         false

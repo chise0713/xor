@@ -22,7 +22,7 @@ use anyhow::Result;
 use coarsetime::Updater as BgClock;
 use log::{Level, error, info, log_enabled, trace};
 use tokio::{
-    runtime::Builder,
+    runtime::{Builder, Runtime},
     signal,
     task::{JoinSet, LocalSet},
 };
@@ -157,56 +157,24 @@ fn main() -> Result<ExitCode> {
 
         Method::DnsUnPad => {}
     };
+
     // end parsing
-
-    Logger::init();
-
-    info!("initializing..");
-    MethodState::set(method)?;
-
-    const MAIN_THREAD: usize = 1;
-    // zero worker when only main thread available
-    let total_threads = thread::available_parallelism()
-        .map(NonZero::get)
-        .unwrap_or_default();
-    let worker_threads = total_threads.saturating_sub(MAIN_THREAD);
-    let rt = if worker_threads == 0 {
-        Builder::new_current_thread().enable_all().build()?
-    } else {
-        Builder::new_multi_thread()
-            .enable_all()
-            .thread_stack_size(WORKER_STACK_SIZE)
-            .thread_name_fn(move || {
-                static ID: AtomicUsize = AtomicUsize::new(0);
-                let id = ID.fetch_add(1, Ordering::SeqCst);
-                format!("{method}-{id}")
-            })
-            .worker_threads(worker_threads)
-            .build()?
+    let (async_main, rt) = match AsyncMain::init(
+        method,
+        listen_address,
+        remote_address,
+        timeout,
+        limit,
+        payload_max,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("{e}");
+            return Ok(ExitCode::FAILURE);
+        }
     };
 
-    let sockets = Sockets::new(&listen_address, &remote_address)?;
-    BgClock::new(CORASETIME_UPDATE).start()?;
-    WatchDog::start(timeout)?;
-    BufPool::init(
-        match (limit, total_threads) {
-            (l, _) if l != 0 => l,
-            // one thread => two tasks => two permits
-            (0, t) if t != 0 => t * 2,
-            // defaults to `DEFAULT_BUFFER_LIMIT`
-            _ => DEFAULT_BUFFER_LIMIT,
-        },
-        payload_max,
-    )?;
-    Started::now()?;
-
-    rt.block_on(
-        AsyncMain {
-            sockets,
-            worker_threads,
-        }
-        .enter(),
-    )
+    rt.block_on(async_main.enter())
 }
 
 static N: AtomicUsize = AtomicUsize::new(0);
@@ -217,6 +185,64 @@ struct AsyncMain {
 }
 
 impl AsyncMain {
+    fn init(
+        method: Method,
+        listen_address: Box<str>,
+        remote_address: Box<str>,
+        timeout: f64,
+        limit: usize,
+        payload_max: usize,
+    ) -> Result<(Self, Runtime)> {
+        Logger::init();
+
+        info!("initializing..");
+        MethodState::init(method)?;
+
+        const MAIN_THREAD: usize = 1;
+        // zero worker when only main thread available
+        let total_threads = thread::available_parallelism()
+            .map(NonZero::get)
+            .unwrap_or_default();
+        let worker_threads = total_threads.saturating_sub(MAIN_THREAD);
+        let rt = if worker_threads == 0 {
+            Builder::new_current_thread().enable_all().build()
+        } else {
+            Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(WORKER_STACK_SIZE)
+                .thread_name_fn(move || {
+                    static ID: AtomicUsize = AtomicUsize::new(0);
+                    let id = ID.fetch_add(1, Ordering::SeqCst);
+                    format!("{method}-{id}")
+                })
+                .worker_threads(worker_threads)
+                .build()
+        }?;
+
+        let sockets = Sockets::new(&listen_address, &remote_address)?;
+        BgClock::new(CORASETIME_UPDATE).start()?;
+        WatchDog::start(timeout)?;
+        BufPool::init(
+            match (limit, total_threads) {
+                (l, _) if l != 0 => l,
+                // one thread => two tasks => two permits
+                (0, t) if t != 0 => t * 2,
+                // defaults to `DEFAULT_BUFFER_LIMIT`
+                _ => DEFAULT_BUFFER_LIMIT,
+            },
+            payload_max,
+        )?;
+        Started::now()?;
+
+        Ok((
+            Self {
+                sockets,
+                worker_threads,
+            },
+            rt,
+        ))
+    }
+
     #[inline(always)]
     async fn enter(self) -> Result<ExitCode> {
         use crate::recv_send::mode::{Inbound, Outbound};
