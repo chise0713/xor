@@ -1,3 +1,5 @@
+use anyhow::{Result, bail};
+
 use super::{ApplyProof, MethodApply, MethodUndo, UndoProof};
 
 mod _s {
@@ -142,11 +144,10 @@ pub struct DnsPad;
 
 impl MethodApply for DnsPad {
     #[inline(always)]
-    unsafe fn apply<P>(_proof: P, ptr: *mut u8, n: &mut usize)
+    unsafe fn apply_unsafe<P>(_proof: P, ptr: *mut u8, n: &mut usize)
     where
         P: ApplyProof<Method = Self>,
     {
-        super::align_check(ptr.addr());
         let len = *n;
         unsafe {
             core::ptr::copy(ptr.cast_const(), ptr.add(DNS_QUERY_LEN), len);
@@ -154,11 +155,20 @@ impl MethodApply for DnsPad {
         };
         *n = len + DNS_QUERY_LEN;
     }
+
+    #[inline(always)]
+    fn apply(buf: &mut [u8], n: &mut usize) -> Result<()> {
+        let Some(proof) = Self::check_apply(buf.len(), *n) else {
+            bail!("dns pad overflow: cap={}, n={n}", buf.len());
+        };
+        unsafe { Self::apply_unsafe(proof, buf.as_mut_ptr(), n) };
+        Ok(())
+    }
 }
 
 impl MethodUndo for DnsPad {
     #[inline(always)]
-    unsafe fn undo<P>(_proof: P, ptr: *mut u8, n: &mut usize)
+    unsafe fn undo_unsafe<P>(_proof: P, ptr: *mut u8, n: &mut usize)
     where
         P: UndoProof<Method = Self>,
     {
@@ -168,5 +178,14 @@ impl MethodUndo for DnsPad {
             core::ptr::copy(ptr.add(DNS_QUERY_LEN), ptr, len);
         };
         *n = len - DNS_QUERY_LEN
+    }
+
+    #[inline(always)]
+    fn undo(buf: &mut [u8], n: &mut usize) -> Result<()> {
+        let Some(proof) = Self::check_undo(*n) else {
+            bail!("dns unpad underflow: {n} < {DNS_QUERY_LEN}");
+        };
+        unsafe { Self::undo_unsafe(proof, buf.as_mut_ptr(), n) };
+        Ok(())
     }
 }

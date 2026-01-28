@@ -57,11 +57,19 @@ mod proof {
 pub struct Xor;
 
 impl MethodApply for Xor {
-    unsafe fn apply<P>(_proof: P, ptr: *mut u8, n: &mut usize)
+    #[inline(always)]
+    unsafe fn apply_unsafe<P>(_proof: P, ptr: *mut u8, n: &mut usize)
     where
         P: super::ApplyProof<Method = Self>,
     {
         unsafe { xor(ptr, *n) }
+    }
+
+    #[inline(always)]
+    fn apply(buf: &mut [u8], n: &mut usize) -> Result<()> {
+        let proof = Self::check_apply().unwrap();
+        unsafe { Self::apply_unsafe(proof, buf.as_mut_ptr(), n) };
+        Ok(())
     }
 }
 

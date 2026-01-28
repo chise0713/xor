@@ -8,9 +8,7 @@ use crate::{
     N, WARN_LIMIT_DUR,
     buf_pool::BufPool,
     local::{ConnectCtx, LastSeen, LocalAddr, NULL_SOCKET_ADDR},
-    methods::{
-        DnsPad, Method, MethodApply as _, MethodState, MethodUndo as _, Xor, dns_pad::DNS_QUERY_LEN,
-    },
+    methods::{DnsPad, Method, MethodApply as _, MethodState, MethodUndo as _, Xor},
     shutdown::Shutdown,
     socket::Socket,
 };
@@ -74,23 +72,21 @@ impl RecvSend {
                 // do apply at `Socket::Outbound.send()` to peer
                 // other vise undo peer apply and `Socket::Inbound.send_to()`
                 if matches!(method, Method::DnsPad) ^ from_outbound {
-                    let Some(_proof) = DnsPad::check_apply(buf.len(), n) else {
-                        warn!("dns pad overflow: cap={}, n={n}", buf.len());
-                        return;
-                    };
-                    unsafe { DnsPad::apply(_proof, buf.as_mut_ptr(), &mut n) };
+                    if let Err(e) = DnsPad::apply(buf, &mut n) {
+                        warn!("{e}");
+                    }
                 } else {
-                    let Some(_proof) = DnsPad::check_undo(n) else {
-                        warn!("dns unpad underflow: {n} < {DNS_QUERY_LEN}");
-                        return;
-                    };
-                    unsafe { DnsPad::undo(_proof, buf.as_mut_ptr(), &mut n) };
+                    if let Err(e) = DnsPad::undo(buf, &mut n) {
+                        warn!("{e}");
+                    }
                 }
             }
 
             Method::Xor => {
                 // xor is symmetrical
-                unsafe { Xor::apply(Xor::check_apply().unwrap(), buf.as_mut_ptr(), &mut n) };
+                if let Err(e) = Xor::apply(buf, &mut n) {
+                    warn!("{e}");
+                }
             }
         }
 
