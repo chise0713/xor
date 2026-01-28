@@ -74,10 +74,12 @@ impl RecvSend {
                 if matches!(method, Method::DnsPad) ^ from_outbound {
                     if let Err(e) = DnsPad::apply(buf, &mut n) {
                         warn!("{e}");
+                        return;
                     }
                 } else {
                     if let Err(e) = DnsPad::undo(buf, &mut n) {
                         warn!("{e}");
+                        return;
                     }
                 }
             }
@@ -86,6 +88,7 @@ impl RecvSend {
                 // xor is symmetrical
                 if let Err(e) = Xor::apply(buf, &mut n) {
                     warn!("{e}");
+                    return;
                 }
             }
         }
