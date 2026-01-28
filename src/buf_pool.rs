@@ -80,13 +80,13 @@ const PUSH_FAILURE: &str = "failed to push BufPool";
 pub struct BufPool;
 
 impl BufPool {
-    pub fn init(limit: usize, payload_max: usize) -> Result<()> {
+    pub fn init(cap: usize, payload_max: usize) -> Result<()> {
         let stride = AlignBox::padded_len(payload_max);
-        let slab = AlignBox::new(limit * stride);
+        let slab = AlignBox::new(cap * stride);
 
-        BufPoolCell::init(limit, slab, stride)?;
+        BufPoolCell::init(cap, slab, stride)?;
 
-        Semaphore.add_permits(limit);
+        Semaphore.add_permits(cap);
         Ok(())
     }
 

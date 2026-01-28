@@ -224,6 +224,7 @@ impl AsyncMain {
         WatchDog::start(timeout)?;
         BufPool::init(
             match (limit, total_threads) {
+                // explicit limit disables automatic safety heuristics
                 (l, _) if l != 0 => l,
                 // one thread => two tasks => two permits
                 (0, t) if t != 0 => t * 2,
