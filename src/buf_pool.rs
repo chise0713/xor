@@ -1,3 +1,4 @@
+// unsafe codes..
 use std::{
     alloc::{self, Layout},
     io::{Error, ErrorKind},
@@ -14,7 +15,7 @@ use log_limit::warn_limit_global;
 use tokio::sync::{Semaphore as SP, TryAcquireError};
 use wide::u64x8;
 
-use self::sealed::{BpSealed, PoolInner};
+use self::sealed::{BufPoolCell, Semaphore};
 use crate::{INIT, ONCE, WARN_LIMIT_DUR, const_concat};
 
 pub const SIMD_WIDTH: usize = size_of::<u64x8>();
@@ -74,8 +75,6 @@ impl DerefMut for AlignBox {
     }
 }
 
-static BUF_POOL: OnceLock<PoolInner> = OnceLock::new();
-
 const PUSH_FAILURE: &str = "failed to push BufPool";
 
 pub struct BufPool;
@@ -85,13 +84,7 @@ impl BufPool {
         let stride = AlignBox::padded_len(payload_max);
         let slab = AlignBox::new(limit * stride);
 
-        if BUF_POOL.set(PoolInner::new(limit, slab, stride)).is_err() {
-            return Err(Error::new(ErrorKind::AlreadyExists, ONCE.as_str()))?;
-        };
-
-        (0..limit).for_each(|i| {
-            BpSealed.push(i).expect(PUSH_FAILURE);
-        });
+        BufPoolCell::init(limit, slab, stride)?;
 
         Semaphore.add_permits(limit);
         Ok(())
@@ -110,7 +103,7 @@ impl BufPool {
         }
         .forget();
 
-        BpSealed.pop()
+        BufPoolCell.pop()
     }
 }
 
@@ -125,51 +118,38 @@ impl Deref for LeasedBuf {
     type Target = [u8];
 
     #[inline(always)]
-    fn deref(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), BpSealed.stride()) }
+    fn deref(&self) -> &Self::Target {
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr().cast_const(), BufPoolCell.stride()) }
     }
 }
 
 impl DerefMut for LeasedBuf {
     #[inline(always)]
-    fn deref_mut(&mut self) -> &mut [u8] {
-        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), BpSealed.stride()) }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), BufPoolCell.stride()) }
     }
 }
 
 impl Drop for LeasedBuf {
     fn drop(&mut self) {
-        BpSealed.push(self.meta).expect(PUSH_FAILURE);
+        BufPoolCell.push(self.meta).expect(PUSH_FAILURE);
         Semaphore.add_permits(1);
     }
 }
 
 mod sealed {
     use super::*;
-    pub(super) struct BpSealed;
 
-    impl Deref for BpSealed {
-        type Target = PoolInner;
-
-        #[inline(always)]
-        fn deref(&self) -> &Self::Target {
-            const_concat! {
-                CTX = "BufPool: " + INIT
-            };
-            BUF_POOL.get().expect(&CTX)
-        }
-    }
-
-    pub(super) struct PoolInner {
+    pub(super) struct BufSlabPool {
         available: ArrayQueue<usize>,
         slab: AlignBox,
         stride: usize,
     }
 
-    impl PoolInner {
-        pub(super) fn new(available: usize, slab: AlignBox, stride: usize) -> Self {
+    impl BufSlabPool {
+        fn new(cap: usize, slab: AlignBox, stride: usize) -> Self {
             Self {
-                available: ArrayQueue::new(available),
+                available: ArrayQueue::new(cap),
                 slab,
                 stride,
             }
@@ -192,19 +172,54 @@ mod sealed {
         }
     }
 
-    unsafe impl Send for PoolInner {}
-    unsafe impl Sync for PoolInner {}
-}
+    unsafe impl Send for BufSlabPool {}
+    unsafe impl Sync for BufSlabPool {}
 
-static POOL_SEM: SP = SP::const_new(0);
+    static BUF_SLAB_POOL: OnceLock<BufSlabPool> = OnceLock::new();
 
-struct Semaphore;
+    pub(super) struct BufPoolCell;
 
-impl Deref for Semaphore {
-    type Target = SP;
+    impl Deref for BufPoolCell {
+        type Target = BufSlabPool;
 
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &POOL_SEM
+        #[inline(always)]
+        fn deref(&self) -> &Self::Target {
+            const_concat! {
+                CTX = "BufPool: " + INIT
+            };
+            BUF_SLAB_POOL.get().expect(&CTX)
+        }
+    }
+
+    impl BufPoolCell {
+        pub(super) fn init(cap: usize, slab: AlignBox, stride: usize) -> Result<()> {
+            BUF_SLAB_POOL
+                .set(BufSlabPool::new(cap, slab, stride))
+                .map_err(|_| {
+                    const_concat! {
+                        CTX = "BufPoolCell::init(): " + ONCE
+                    };
+                    Error::new(ErrorKind::AlreadyExists, CTX.as_str())
+                })?;
+
+            (0..cap).for_each(|i| {
+                BufPoolCell.push(i).expect(PUSH_FAILURE);
+            });
+
+            Ok(())
+        }
+    }
+
+    static POOL_SEM: SP = SP::const_new(0);
+
+    pub(super) struct Semaphore;
+
+    impl Deref for Semaphore {
+        type Target = SP;
+
+        #[inline(always)]
+        fn deref(&self) -> &Self::Target {
+            &POOL_SEM
+        }
     }
 }
