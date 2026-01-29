@@ -8,7 +8,7 @@ use crate::{
     N, WARN_LIMIT_DUR,
     buf_pool::BufPool,
     local::{ConnectCtx, LastSeen, LocalAddr, NULL_SOCKET_ADDR},
-    methods::{DnsPad, Method, MethodApply as _, MethodState, MethodUndo as _, Xor},
+    methods::{Method, MethodState},
     shutdown::Shutdown,
     socket::Socket,
 };
@@ -67,31 +67,10 @@ impl RecvSend {
         cached_local: SocketAddr,
     ) {
         let from_outbound = matches!(M::mode(), Modes::Outbound);
-        match method {
-            Method::DnsPad | Method::DnsUnPad => {
-                // do apply at `Socket::Outbound.send()` to peer
-                // other vise undo peer apply and `Socket::Inbound.send_to()`
-                if matches!(method, Method::DnsPad) ^ from_outbound {
-                    if let Err(e) = DnsPad::apply(buf, &mut n) {
-                        warn!("{e}");
-                        return;
-                    }
-                } else {
-                    if let Err(e) = DnsPad::undo(buf, &mut n) {
-                        warn!("{e}");
-                        return;
-                    }
-                }
-            }
-
-            Method::Xor => {
-                // xor is symmetrical
-                if let Err(e) = Xor::apply(buf, &mut n) {
-                    warn!("{e}");
-                    return;
-                }
-            }
-        }
+        if let Err(e) = method.run(from_outbound, buf, &mut n) {
+            warn!("{e}");
+            return;
+        };
 
         // Socket::Inbound.recv_from() -> process -> Socket::Outbound.send()
         // Socket::Outbound.recv() -> process -> Socket::Inbound.send_to()

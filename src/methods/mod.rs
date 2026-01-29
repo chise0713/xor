@@ -75,6 +75,22 @@ impl Method {
             Method::DnsUnPad => "dnsunpad",
         }
     }
+
+    #[inline(always)]
+    pub fn run(self, from_outbound: bool, buf: &mut [u8], n: &mut usize) -> Result<()> {
+        match self {
+            Method::DnsPad | Method::DnsUnPad => {
+                let apply = matches!(self, Method::DnsPad) ^ from_outbound;
+                if apply {
+                    DnsPad::apply(buf, n)
+                } else {
+                    DnsPad::undo(buf, n)
+                }
+            }
+
+            Method::Xor => Xor::apply(buf, n),
+        }
+    }
 }
 
 impl FromStr for Method {
