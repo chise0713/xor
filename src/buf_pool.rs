@@ -39,13 +39,13 @@ impl AlignBox {
     }
 
     #[inline(always)]
-    fn layout(size: usize) -> Layout {
-        Layout::from_size_align(Self::padded_len(size), Self::align()).unwrap()
+    fn layout(padded_len: usize) -> Layout {
+        Layout::from_size_align(padded_len, Self::align()).unwrap()
     }
 
     pub fn new(size: usize) -> Self {
         let padded_len = Self::padded_len(size);
-        let layout = Self::layout(size);
+        let layout = Self::layout(padded_len);
         let raw_ptr = unsafe { alloc::alloc_zeroed(layout) };
         let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
         Self { ptr, padded_len }
