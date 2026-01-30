@@ -129,7 +129,12 @@ fn main() -> Result<ExitCode> {
     let payload_max = mtu.saturating_sub(LINK_PAYLOAD_OFFSET);
     let limit = buffer_limit_usize.unwrap_or(usize::MIN);
 
-    let Ok(method) = Method::from_str(set_method.as_deref().unwrap_or_default()) else {
+    let Ok(method) = set_method
+        .as_deref()
+        .map(Method::from_str)
+        .transpose()
+        .map(Option::unwrap_or_default)
+    else {
         return args::invalid_argument();
     };
 
