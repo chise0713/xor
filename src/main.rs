@@ -129,11 +129,8 @@ fn main() -> Result<ExitCode> {
     let payload_max = mtu.saturating_sub(LINK_PAYLOAD_OFFSET);
     let limit = buffer_limit_usize.unwrap_or(usize::MIN);
 
-    let method = match set_method.as_deref().map(Method::from_str).transpose() {
-        Ok(m) => m.unwrap_or_default(),
-        Err(_) => {
-            return args::invalid_argument();
-        }
+    let Ok(method) = Method::from_str(set_method.as_deref().unwrap_or_default()) else {
+        return args::invalid_argument();
     };
 
     match method {
@@ -157,8 +154,8 @@ fn main() -> Result<ExitCode> {
 
         Method::DnsUnPad => {}
     };
-
     // end parsing
+
     let (async_main, rt) = match AsyncMain::init(
         method,
         listen_address,

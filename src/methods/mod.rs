@@ -17,7 +17,7 @@ use std::{
     sync::OnceLock,
 };
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use crate::{INIT, ONCE, const_concat};
 
@@ -94,14 +94,14 @@ impl Method {
 }
 
 impl FromStr for Method {
-    type Err = anyhow::Error;
+    type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "xor" => Ok(Method::Xor),
             "dnspad" => Ok(Method::DnsPad),
             "dnsunpad" => Ok(Method::DnsUnPad),
-            _ => bail!("unknown method: {s}"),
+            _ => Err(()),
         }
     }
 }
