@@ -2,11 +2,10 @@
 
 ## Usage
 ```console
-usage: xor [-h] [-b buffer_limit_usize] [-l listen_address]
-           [-m mtu_usize] [-o timeout_f64_secs]
-           [-r remote_address] [-s set_method] [-t token_hex_u8]
+usage: xor [-h] [-l listen_address] [-m mtu_usize]
+           [-o timeout_f64_secs] [-r remote_address]
+           [-s set_method] [-t token_hex_u8]
 Command Summary:
-        -b              for total pre-allocated buffer
         -h              prints this help message
         -l              listen address
         -m              for link mtu
@@ -19,21 +18,21 @@ Command Summary:
 ### XOR
 - local:
 ```console
-xor -b64 -l127.0.0.1:51820 -m1492 -o2 -r place.holder.local.arpa:65535 -t0xFF
+xor -l127.0.0.1:51820 -m1492 -o2 -r place.holder.local.arpa:65535 -t0xFF
 ```
 - remote:
 ```console
-xor -b64 -l[::]:65535 -m1492 -o2 -r127.0.0.1:51820 -t0xFF
+xor -l[::]:65535 -m1492 -o2 -r127.0.0.1:51820 -t0xFF
 ```
 
 ### Padding DNS Query
 - local:
 ```console
-xor -b64 -l127.0.0.1:51820 -m1492 -o2 -r place.holder.local.arpa:65535 -sdnspad
+xor -l127.0.0.1:51820 -m1492 -o2 -r place.holder.local.arpa:65535 -sdnspad
 ```
 - remote:
 ```console
-xor -b64 -l[::]:65535 -m1492 -o2 -r127.0.0.1:51820 -sdnsunpad
+xor -l[::]:65535 -m1492 -o2 -r127.0.0.1:51820 -sdnsunpad
 ```
 
 ## License
