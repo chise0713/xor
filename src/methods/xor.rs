@@ -12,14 +12,15 @@ static TOKEN_SIMD: OnceLock<u64x8> = OnceLock::new();
 pub struct XorToken;
 
 impl XorToken {
+    const BROADCAST_MUL: u64 = 0x0101010101010101;
     pub fn init(val: u8) -> Result<()> {
         const_concat! {
             CTX = "XorToken::set()" + ONCE
         };
         TOKEN_U8.set(val).expect(&CTX);
-        const BROADCAST_MUL: u64 = 0x0101010101010101;
+
         TOKEN_SIMD
-            .set(u64x8::splat(BROADCAST_MUL.wrapping_mul(val as u64)))
+            .set(u64x8::splat(Self::BROADCAST_MUL.wrapping_mul(val as u64)))
             .expect(&CTX);
         Ok(())
     }
@@ -62,7 +63,8 @@ impl MethodApply for Xor {
     where
         P: super::ApplyProof<Method = Self>,
     {
-        unsafe { xor(ptr, *n) }
+        let (token, simd) = XorToken::get();
+        unsafe { xor(ptr, *n, token, simd) }
     }
 
     #[inline(always)]
@@ -74,9 +76,8 @@ impl MethodApply for Xor {
 }
 
 #[inline(always)]
-unsafe fn xor(ptr: *mut u8, n: usize) {
+unsafe fn xor(ptr: *mut u8, n: usize, token: u8, simd: u64x8) {
     super::align_check(ptr.addr());
-    let (token, simd) = XorToken::get();
     if token == 0 {
         return;
     }
@@ -104,6 +105,7 @@ mod bench {
     extern crate test;
 
     use test::Bencher;
+    use wide::u64x8;
 
     use super::XorToken;
     use crate::{K, buf_pool::AlignBox};
@@ -116,7 +118,14 @@ mod bench {
         let mut data = AlignBox::new(N);
         let ptr = data.as_mut_ptr();
         XorToken::init(TOKEN).unwrap();
-        b.iter(|| unsafe { super::xor(ptr, N) });
+        b.iter(|| unsafe {
+            super::xor(
+                ptr,
+                N,
+                TOKEN,
+                u64x8::splat(XorToken::BROADCAST_MUL.wrapping_mul(TOKEN as u64)),
+            )
+        });
     }
 
     #[bench]

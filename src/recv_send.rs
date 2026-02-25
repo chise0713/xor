@@ -102,7 +102,7 @@ impl RecvSend {
         let method = *MethodState::current();
         while !Shutdown::requested() {
             let Some(mut buf) = BufPool::acquire().await else {
-                error!("semaphore closed");
+                error!("buffer pool not pooling (huh?)");
                 break;
             };
 

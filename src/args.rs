@@ -5,8 +5,6 @@ use anyhow::Result;
 #[derive(supershorty::Args, Debug)]
 #[args(name = "xor")]
 pub struct Args {
-    #[arg(flag = 'b', help = "for total pre-allocated buffer")]
-    pub buffer_limit_usize: Option<usize>,
     #[arg(flag = 'l', help = "listen address")]
     pub listen_address: Option<Box<str>>,
     #[arg(flag = 'm', help = "for link mtu")]

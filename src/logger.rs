@@ -24,8 +24,8 @@ impl Logger {
                     buf,
                     "[{} {}:{} {}]: {}",
                     buf.timestamp_millis(),
-                    record.file().unwrap(),
-                    record.line().unwrap(),
+                    record.file().unwrap_or("unknown"),
+                    record.line().unwrap_or(0),
                     level_str,
                     record.args()
                 )

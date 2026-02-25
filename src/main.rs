@@ -88,7 +88,6 @@ const K: usize = 2usize.pow(10); // 1024
 const M: usize = K.pow(2); // 1024 * 1024
 
 const DEFAULT_MTU: usize = 1500;
-const DEFAULT_BUFFER_LIMIT: usize = 48;
 
 const CORASETIME_UPDATE: u64 = 100;
 const WORKER_STACK_SIZE: usize = 256 * K;
@@ -98,7 +97,6 @@ const WARN_LIMIT_DUR: Duration = Duration::from_millis(250);
 fn main() -> Result<ExitCode> {
     // start parsing
     let Args {
-        buffer_limit_usize,
         listen_address,
         mtu_usize,
         remote_address,
@@ -127,7 +125,6 @@ fn main() -> Result<ExitCode> {
     }
 
     let payload_max = mtu.saturating_sub(LINK_PAYLOAD_OFFSET);
-    let limit = buffer_limit_usize.unwrap_or(usize::MIN);
 
     let Ok(method) = set_method
         .as_deref()
@@ -161,25 +158,21 @@ fn main() -> Result<ExitCode> {
     };
     // end parsing
 
-    let (async_main, rt) = match AsyncMain::init(
-        method,
-        listen_address,
-        remote_address,
-        timeout,
-        limit,
-        payload_max,
-    ) {
-        Ok(v) => v,
-        Err(e) => {
-            error!("{e}");
-            return Ok(ExitCode::FAILURE);
-        }
-    };
+    let (async_main, rt) =
+        match AsyncMain::init(method, listen_address, remote_address, timeout, payload_max) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("{e}");
+                return Ok(ExitCode::FAILURE);
+            }
+        };
 
     rt.block_on(async_main.enter())
 }
 
 static N: AtomicUsize = AtomicUsize::new(0);
+
+const TASK_PER_THREAD: usize = 2;
 
 struct AsyncMain {
     sockets: Sockets,
@@ -192,7 +185,6 @@ impl AsyncMain {
         listen_address: Box<str>,
         remote_address: Box<str>,
         timeout: f64,
-        limit: usize,
         payload_max: usize,
     ) -> Result<(Self, Runtime)> {
         Logger::init();
@@ -221,20 +213,11 @@ impl AsyncMain {
                 .build()
         }?;
 
+        // FIXME: reduce global states
         let sockets = Sockets::new(&listen_address, &remote_address)?;
         BgClock::new(CORASETIME_UPDATE).start()?;
         WatchDog::start(timeout)?;
-        BufPool::init(
-            match (limit, total_threads) {
-                // explicit limit disables automatic safety heuristics
-                (l, _) if l != 0 => l,
-                // one thread => two tasks => two permits
-                (0, t) if t != 0 => t * 2,
-                // defaults to `DEFAULT_BUFFER_LIMIT`
-                _ => DEFAULT_BUFFER_LIMIT,
-            },
-            payload_max,
-        )?;
+        BufPool::init(total_threads * TASK_PER_THREAD, payload_max)?;
         Started::now()?;
 
         Ok((
@@ -254,8 +237,12 @@ impl AsyncMain {
 
         let mut join_set = JoinSet::new();
         (0..self.worker_threads).for_each(|_| {
+            let mut i = 0;
             join_set.spawn(RecvSend.recv::<Outbound>());
+            i += 1;
             join_set.spawn(RecvSend.recv::<Inbound>());
+            i += 1;
+            assert_eq!(i, TASK_PER_THREAD);
         });
         let local_set = LocalSet::new();
         join_set.spawn_local_on(RecvSend.recv::<Outbound>(), &local_set);

@@ -1,6 +1,7 @@
 // unsafe codes..
 use std::{
     alloc::{self, Layout},
+    cell::RefCell,
     io::{Error, ErrorKind},
     ops::{Deref, DerefMut},
     ptr::NonNull,
@@ -9,14 +10,13 @@ use std::{
 };
 
 use anyhow::Result;
+use arrayvec::ArrayVec;
 use crossbeam_queue::ArrayQueue;
 use crossbeam_utils::CachePadded;
-use log_limit::warn_limit_global;
-use tokio::sync::{Semaphore as SP, TryAcquireError};
 use wide::u64x8;
 
-use self::sealed::{BufPoolCell, Semaphore};
-use crate::{INIT, ONCE, WARN_LIMIT_DUR, const_concat};
+use self::sealed::BufPoolCell;
+use crate::{INIT, ONCE, TASK_PER_THREAD, const_concat};
 
 pub const SIMD_WIDTH: usize = size_of::<u64x8>();
 
@@ -77,6 +77,12 @@ impl DerefMut for AlignBox {
 
 const PUSH_FAILURE: &str = "failed to push BufPool";
 
+thread_local! {
+    /// small work-around of the sharing buffer pool across all threads
+    /// still needs some refactor
+    static META_IDX_POOL: RefCell<ArrayVec<usize, TASK_PER_THREAD>> = const { RefCell::new(ArrayVec::new_const()) };
+}
+
 pub struct BufPool;
 
 impl BufPool {
@@ -85,31 +91,31 @@ impl BufPool {
         let slab = AlignBox::new(cap * stride);
 
         BufPoolCell::init(cap, slab, stride)?;
-
-        Semaphore.add_permits(cap);
         Ok(())
     }
 
     pub async fn acquire() -> Option<LeasedBuf> {
-        match Semaphore.try_acquire() {
-            Ok(permit) => permit,
-            Err(TryAcquireError::Closed) => {
-                return None;
-            }
-            Err(TryAcquireError::NoPermits) => {
-                warn_limit_global!(1, WARN_LIMIT_DUR, "semaphore backpressure");
-                Semaphore.acquire().await.ok()?
-            }
-        }
-        .forget();
+        if let Some(meta) = META_IDX_POOL.with_borrow_mut(ArrayVec::pop) {
+            // # Safety
+            // meta is from `META_IDX_POOL.pop()`
+            return unsafe { BufPoolCell.meta_to_buf(meta) };
+        };
 
         BufPoolCell.pop()
     }
 }
 
 pub struct LeasedBuf {
-    ptr: NonNull<u8>,
+    ptr: NonNull<[u8]>,
     meta: usize,
+}
+
+impl LeasedBuf {
+    #[cold]
+    #[inline(never)]
+    fn drop_slow(&self) {
+        BufPoolCell.push(self.meta).expect(PUSH_FAILURE);
+    }
 }
 
 unsafe impl Send for LeasedBuf {}
@@ -119,27 +125,42 @@ impl Deref for LeasedBuf {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        unsafe { slice::from_raw_parts(self.ptr.as_ptr().cast_const(), BufPoolCell.stride()) }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
 impl DerefMut for LeasedBuf {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), BufPoolCell.stride()) }
+        unsafe { self.ptr.as_mut() }
     }
 }
 
 impl Drop for LeasedBuf {
     fn drop(&mut self) {
-        BufPoolCell.push(self.meta).expect(PUSH_FAILURE);
-        Semaphore.add_permits(1);
+        let returned_to_global = META_IDX_POOL.with_borrow_mut(|pool| {
+            if pool.len() < TASK_PER_THREAD {
+                pool.push(self.meta);
+                false
+            } else {
+                true
+            }
+        });
+
+        if returned_to_global {
+            self.drop_slow();
+        }
     }
 }
 
 mod sealed {
+    use std::ptr;
+
     use super::*;
 
+    /// FIXME: currentlly built on top of sharing buffer
+    /// across all threads, but it should be consider to
+    /// make every thread has it's own buffer pool
     pub(super) struct BufSlabPool {
         available: ArrayQueue<usize>,
         slab: AlignBox,
@@ -161,14 +182,19 @@ mod sealed {
 
         pub(super) fn pop(&self) -> Option<LeasedBuf> {
             let meta = self.available.pop()?;
-            let offset = meta * self.stride;
-            let ptr = NonNull::new(unsafe { self.slab.as_ptr().add(offset).cast_mut() })?;
-            Some(LeasedBuf { ptr, meta })
+            // # Safety
+            // meta is from `available.pop()`
+            unsafe { self.meta_to_buf(meta) }
         }
 
-        #[inline(always)]
-        pub(super) fn stride(&self) -> usize {
-            self.stride
+        // very unsafe
+        pub(super) unsafe fn meta_to_buf(&self, meta: usize) -> Option<LeasedBuf> {
+            let offset = meta * self.stride;
+            let ptr = ptr::slice_from_raw_parts_mut(
+                unsafe { self.slab.as_ptr().add(offset).cast_mut() },
+                self.stride,
+            );
+            NonNull::new(ptr).map(|ptr| LeasedBuf { ptr, meta })
         }
     }
 
@@ -207,19 +233,6 @@ mod sealed {
             });
 
             Ok(())
-        }
-    }
-
-    static POOL_SEM: SP = SP::const_new(0);
-
-    pub(super) struct Semaphore;
-
-    impl Deref for Semaphore {
-        type Target = SP;
-
-        #[inline(always)]
-        fn deref(&self) -> &Self::Target {
-            &POOL_SEM
         }
     }
 }

@@ -14,7 +14,12 @@
         {
             "matchCategories": [
                 "rust"
-            ]
+            ],
+            "matchUpdateTypes": [
+                "major",
+                "minor"
+            ],
+            "enabled": true
         },
         {
             "matchManagers": [

@@ -1,6 +1,6 @@
 [package]
 name = "xor"
-version = "0.1.52"
+version = "0.1.53"
 edition = "2024"
 
 [features]
@@ -9,6 +9,7 @@ bench = []
 
 [dependencies]
 anyhow = "^1"
+arrayvec = "^0.7"
 coarsetime = "^0.1"
 crossbeam-queue = "^0.3"
 crossbeam-utils = "^0.8"
@@ -28,7 +29,6 @@ tokio = { version = "^1.49", default-features = false, features = [
     "rt",
     "rt-multi-thread",
     "signal",
-    "sync",
 ] }
 wide = "^1.1"
 
