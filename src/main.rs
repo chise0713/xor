@@ -238,14 +238,14 @@ impl AsyncMain {
         let mut join_set = JoinSet::new();
         (0..self.worker_threads).for_each(|_| {
             let mut i = 0;
-            join_set.spawn(RecvSend.recv::<Outbound>());
+            join_set.spawn(RecvSend::recv(Outbound));
             i += 1;
-            join_set.spawn(RecvSend.recv::<Inbound>());
+            join_set.spawn(RecvSend::recv(Inbound));
             i += 1;
             assert_eq!(i, TASK_PER_THREAD);
         });
         let local_set = LocalSet::new();
-        join_set.spawn_local_on(RecvSend.recv::<Outbound>(), &local_set);
+        join_set.spawn_local_on(RecvSend::recv(Outbound), &local_set);
 
         info!("service started");
 
@@ -261,7 +261,7 @@ impl AsyncMain {
             _ = join_set.join_next() => {
                 net_fail = true;
             },
-            _ = local_set.run_until(RecvSend.recv::<Inbound>()) => {
+            _ = local_set.run_until(RecvSend::recv(Inbound)) => {
                 net_fail = true;
             }
         }

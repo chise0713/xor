@@ -54,11 +54,13 @@ pub mod mode {
     }
 }
 
-pub struct RecvSend;
+pub struct RecvSend<M: Mode> {
+    _mode: M,
+}
 
-impl RecvSend {
+impl<M: Mode> RecvSend<M> {
     #[inline(always)]
-    fn send<M: Mode>(
+    fn send(
         &self,
         buf: &mut [u8],
         mut n: usize,
@@ -92,7 +94,8 @@ impl RecvSend {
         };
     }
 
-    pub async fn recv<M: Mode>(&self) {
+    pub async fn recv(mode: M) {
+        let this = Self { _mode: mode };
         let socket = match M::mode() {
             Modes::Inbound => Socket::Inbound,
             Modes::Outbound => Socket::Outbound,
@@ -117,16 +120,16 @@ impl RecvSend {
                 N.fetch_max(n, Ordering::Relaxed);
             }
 
-            if self.additional::<M>(addr, &mut cached_local, &mut cached_ver) {
+            if this.additional(addr, &mut cached_local, &mut cached_ver) {
                 continue;
             }
 
-            self.send::<M>(&mut buf, n, !socket, method, cached_local);
+            this.send(&mut buf, n, !socket, method, cached_local);
         }
     }
 
     #[must_use]
-    fn additional<M: Mode>(
+    fn additional(
         &self,
         addr: SocketAddr,
         cached_local: &mut SocketAddr,
