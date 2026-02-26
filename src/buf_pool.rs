@@ -94,7 +94,7 @@ impl BufPool {
         Ok(())
     }
 
-    pub async fn acquire() -> Option<LeasedBuf> {
+    pub fn acquire() -> Option<LeasedBuf> {
         if let Some(meta) = META_IDX_POOL.with_borrow_mut(ArrayVec::pop) {
             // # Safety
             // meta is from `META_IDX_POOL.pop()`
@@ -138,8 +138,8 @@ impl DerefMut for LeasedBuf {
 
 impl Drop for LeasedBuf {
     fn drop(&mut self) {
-        let returned_to_global = META_IDX_POOL.with_borrow_mut(|pool| {
-            if pool.len() < TASK_PER_THREAD {
+        let return_to_global = META_IDX_POOL.with_borrow_mut(|pool| {
+            if !pool.is_full() {
                 pool.push(self.meta);
                 false
             } else {
@@ -147,7 +147,7 @@ impl Drop for LeasedBuf {
             }
         });
 
-        if returned_to_global {
+        if return_to_global {
             self.drop_slow();
         }
     }
@@ -191,7 +191,7 @@ mod sealed {
         pub(super) unsafe fn meta_to_buf(&self, meta: usize) -> Option<LeasedBuf> {
             let offset = meta * self.stride;
             let ptr = ptr::slice_from_raw_parts_mut(
-                unsafe { self.slab.as_ptr().add(offset).cast_mut() },
+                unsafe { self.slab.ptr.as_ptr().add(offset) },
                 self.stride,
             );
             NonNull::new(ptr).map(|ptr| LeasedBuf { ptr, meta })

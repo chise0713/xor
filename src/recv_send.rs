@@ -104,7 +104,7 @@ impl<M: Mode> RecvSend<M> {
         let mut cached_local = NULL_SOCKET_ADDR;
         let method = *MethodState::current();
         while !Shutdown::requested() {
-            let Some(mut buf) = BufPool::acquire().await else {
+            let Some(mut buf) = BufPool::acquire() else {
                 error!("buffer pool not pooling (huh?)");
                 break;
             };
