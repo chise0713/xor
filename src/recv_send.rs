@@ -17,7 +17,6 @@ pub mod mode {
     use super::*;
 
     // idea stole from GPT
-    #[repr(u8)]
     pub enum Modes {
         Inbound = 0,
         Outbound = 1,

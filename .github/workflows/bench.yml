@@ -24,10 +24,14 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: nightly
+      - name: Detect native cpu
+        id: cpu
+        run: |
+          echo "hash=$(rustc -Ctarget-cpu=native --print cfg | sha256sum | cut -d' ' -f1)" >> $GITHUB_OUTPUT
       - name: Cache cargo registry, index, and targets
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
-          prefix-key: "cargo-bench"
+          prefix-key: "cargo-bench-${{ steps.cpu.outputs.hash }}"
       - name: Run benchmarks
         run: |
           echo -e "### Benchmark results\n" '```console' >> $GITHUB_STEP_SUMMARY

@@ -117,7 +117,6 @@ mod bench {
     fn simd(b: &mut Bencher) {
         let mut data = AlignBox::new(N);
         let ptr = data.as_mut_ptr();
-        XorToken::init(TOKEN).unwrap();
         b.iter(|| unsafe {
             super::xor(
                 ptr,
