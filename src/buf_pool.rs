@@ -5,7 +5,6 @@ use std::{
     io::{Error, ErrorKind},
     ops::{Deref, DerefMut},
     ptr::NonNull,
-    slice,
     sync::OnceLock,
 };
 
@@ -25,16 +24,20 @@ pub struct AlignBox {
     padded_len: usize,
 }
 
-pub const CACHELINE_ALIGN: usize = size_of::<CachePadded<Box<()>>>();
-
 impl AlignBox {
     #[inline(always)]
-    fn align() -> usize {
-        CACHELINE_ALIGN.max(SIMD_WIDTH)
+    const fn align() -> usize {
+        const CACHELINE_ALIGN: usize = size_of::<CachePadded<Box<()>>>();
+
+        if SIMD_WIDTH < CACHELINE_ALIGN {
+            CACHELINE_ALIGN
+        } else {
+            SIMD_WIDTH
+        }
     }
 
     #[inline(always)]
-    fn padded_len(size: usize) -> usize {
+    const fn padded_len(size: usize) -> usize {
         size.div_ceil(SIMD_WIDTH) * SIMD_WIDTH
     }
 
@@ -50,28 +53,17 @@ impl AlignBox {
         let ptr = NonNull::new(raw_ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
         Self { ptr, padded_len }
     }
+
+    #[cfg(test)]
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr.as_ptr()
+    }
 }
 
 impl Drop for AlignBox {
     fn drop(&mut self) {
         let layout = Layout::from_size_align(self.padded_len, Self::align()).unwrap();
         unsafe { alloc::dealloc(self.ptr.as_ptr(), layout) }
-    }
-}
-
-impl Deref for AlignBox {
-    type Target = [u8];
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.padded_len) }
-    }
-}
-
-impl DerefMut for AlignBox {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.padded_len) }
     }
 }
 
