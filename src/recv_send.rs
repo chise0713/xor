@@ -102,7 +102,8 @@ impl<M: Mode> RecvSend<M> {
         };
     }
 
-    pub async fn recv(_: M) {
+    pub async fn recv(mode: M) {
+        let _ = mode;
         let this = Self {
             _marker: PhantomData,
         };
