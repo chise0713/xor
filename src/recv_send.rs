@@ -1,4 +1,4 @@
-use std::{io::ErrorKind, net::SocketAddr, sync::atomic::Ordering};
+use std::{io::ErrorKind, marker::PhantomData, net::SocketAddr, sync::atomic::Ordering};
 
 use log::{Level, error, log_enabled, warn};
 use log_limit::warn_limit_global;
@@ -14,6 +14,8 @@ use crate::{
 };
 
 pub mod mode {
+    use super::*;
+
     // idea stole from GPT
     #[repr(u8)]
     pub enum Modes {
@@ -23,28 +25,34 @@ pub mod mode {
 
     #[expect(private_bounds)]
     pub trait Mode: sealed::Sealed {
-        const MODE: u8;
+        const MODE: Modes;
+
+        fn socket() -> Socket;
 
         #[inline(always)]
         fn mode() -> Modes {
-            match Self::MODE {
-                0 => Modes::Inbound,
-                1 => Modes::Outbound,
-                _ => unimplemented!(),
-            }
+            Self::MODE
         }
     }
 
     pub struct Inbound;
 
     impl Mode for Inbound {
-        const MODE: u8 = 0;
+        const MODE: Modes = Modes::Inbound;
+
+        fn socket() -> Socket {
+            Socket::Inbound
+        }
     }
 
     pub struct Outbound;
 
     impl Mode for Outbound {
-        const MODE: u8 = 1;
+        const MODE: Modes = Modes::Outbound;
+
+        fn socket() -> Socket {
+            Socket::Outbound
+        }
     }
 
     mod sealed {
@@ -55,7 +63,7 @@ pub mod mode {
 }
 
 pub struct RecvSend<M: Mode> {
-    _mode: M,
+    _marker: PhantomData<M>,
 }
 
 impl<M: Mode> RecvSend<M> {
@@ -94,12 +102,11 @@ impl<M: Mode> RecvSend<M> {
         };
     }
 
-    pub async fn recv(mode: M) {
-        let this = Self { _mode: mode };
-        let socket = match M::mode() {
-            Modes::Inbound => Socket::Inbound,
-            Modes::Outbound => Socket::Outbound,
+    pub async fn recv(_: M) {
+        let this = Self {
+            _marker: PhantomData,
         };
+        let socket = M::socket();
         let mut cached_ver = 0;
         let mut cached_local = NULL_SOCKET_ADDR;
         let method = *MethodState::current();
