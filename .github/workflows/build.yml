@@ -60,7 +60,7 @@ jobs:
           args: "--locked --release"
           strip: true
       - name: Upload binary artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.platform.target }}
           path: target/${{ matrix.platform.target }}/release/${{ env.BINARY_NAME }}
@@ -97,7 +97,7 @@ jobs:
           args: "--locked --release --features io-uring"
           strip: true
       - name: Upload binary artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.platform.target }}-io-uring
           path: target/${{ matrix.platform.target }}/release/${{ env.BINARY_NAME }}
@@ -127,7 +127,7 @@ jobs:
           args: "--locked --release"
           strip: true
       - name: Upload binary artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.platform.target }}
           path: target/${{ matrix.platform.target }}/release/${{ env.BINARY_NAME }}.exe
@@ -164,7 +164,7 @@ jobs:
           args: "--locked --release ${{ env.EXTRA_CROSS_ARGS }}"
           strip: true
       - name: Upload binary artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.target }}-v${{ matrix.version }}${{ env.ARTIFACT_SUFFIX }}
           path: target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}
