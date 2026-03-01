@@ -253,8 +253,11 @@ impl AsyncMain {
         let mut net_fail = false;
 
         tokio::select! {
-            _ = signal::ctrl_c() => {
-                info!("shutting down");
+            r = signal::ctrl_c() => {
+                match r {
+                    Ok(()) => info!("shutting down"),
+                    Err(e) => error!("{e}"),
+                }
                 Shutdown::request();
                 exit_code = ExitCode::SUCCESS;
             },
