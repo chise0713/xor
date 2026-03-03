@@ -18,8 +18,8 @@ pub mod mode {
 
     // idea stole from GPT
     pub enum Modes {
-        Inbound = 0,
-        Outbound = 1,
+        Inbound,
+        Outbound,
     }
 
     #[expect(private_bounds)]

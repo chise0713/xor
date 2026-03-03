@@ -172,6 +172,8 @@ fn main() -> Result<ExitCode> {
 
 static N: AtomicUsize = AtomicUsize::new(0);
 
+static SLOW_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 const TASK_PER_THREAD: usize = 2;
 
 struct AsyncMain {
@@ -255,11 +257,13 @@ impl AsyncMain {
         tokio::select! {
             r = signal::ctrl_c() => {
                 match r {
-                    Ok(()) => info!("shutting down"),
+                    Ok(()) => {
+                        info!("shutting down");
+                        exit_code = ExitCode::SUCCESS;
+                    },
                     Err(e) => error!("{e}"),
                 }
                 Shutdown::request();
-                exit_code = ExitCode::SUCCESS;
             },
             _ = join_set.join_next() => {
                 net_fail = true;
@@ -269,13 +273,19 @@ impl AsyncMain {
             }
         }
         join_set.abort_all();
+
         if net_fail {
             error!("a network recv task exited prematurely");
         }
+
         if log_enabled!(Level::Trace) {
             let n = N.load(Ordering::Relaxed);
             if n != 0 {
                 trace!("max packet payload size: {n}");
+            }
+            let slow_drop_count = SLOW_DROP_COUNT.load(Ordering::Relaxed);
+            if slow_drop_count != 0 {
+                trace!("slow dropped {slow_drop_count} times");
             }
         }
 

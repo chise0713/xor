@@ -5,7 +5,7 @@ use std::{
     io::{Error, ErrorKind},
     ops::{Deref, DerefMut},
     ptr::NonNull,
-    sync::OnceLock,
+    sync::{OnceLock, atomic::Ordering},
 };
 
 use anyhow::Result;
@@ -15,7 +15,7 @@ use crossbeam_utils::CachePadded;
 use wide::u64x8;
 
 use self::sealed::BufPoolCell;
-use crate::{INIT, ONCE, TASK_PER_THREAD, const_concat};
+use crate::{INIT, ONCE, SLOW_DROP_COUNT, TASK_PER_THREAD, const_concat};
 
 pub const SIMD_WIDTH: usize = size_of::<u64x8>();
 
@@ -107,6 +107,7 @@ impl LeasedBuf {
     #[inline(never)]
     fn drop_slow(&self) {
         BufPoolCell.push(self.meta).expect(PUSH_FAILURE);
+        SLOW_DROP_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
 
