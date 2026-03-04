@@ -117,7 +117,7 @@ impl<M: Mode> RecvSend<M> {
             };
 
             let Some(mut buf) = BufPool::acquire() else {
-                error!("buffer pool not pooling (huh?)");
+                error!("failed to acquire a LeasedBuf");
                 break;
             };
 

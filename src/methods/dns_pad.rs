@@ -172,11 +172,11 @@ impl MethodUndo for DnsPad {
     where
         P: UndoProof<Method = Self>,
     {
-        let len = *n;
+        let len = *n - DNS_QUERY_LEN;
         unsafe {
             core::ptr::copy(ptr.add(DNS_QUERY_LEN), ptr, len);
         };
-        *n = len - DNS_QUERY_LEN
+        *n = len;
     }
 
     #[inline(always)]

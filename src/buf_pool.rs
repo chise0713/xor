@@ -11,7 +11,6 @@ use std::{
 use anyhow::Result;
 use arrayvec::ArrayVec;
 use crossbeam_queue::ArrayQueue;
-use crossbeam_utils::CachePadded;
 use wide::u64x8;
 
 use self::sealed::BufPoolCell;
@@ -27,18 +26,12 @@ pub struct AlignBox {
 impl AlignBox {
     #[inline(always)]
     const fn align() -> usize {
-        const CACHELINE_ALIGN: usize = size_of::<CachePadded<Box<()>>>();
-
-        if SIMD_WIDTH < CACHELINE_ALIGN {
-            CACHELINE_ALIGN
-        } else {
-            SIMD_WIDTH
-        }
+        SIMD_WIDTH
     }
 
     #[inline(always)]
     const fn padded_len(size: usize) -> usize {
-        size.div_ceil(SIMD_WIDTH) * SIMD_WIDTH
+        size.div_ceil(Self::align()) * Self::align()
     }
 
     #[inline(always)]
@@ -55,7 +48,7 @@ impl AlignBox {
     }
 
     #[cfg(all(test, feature = "bench"))]
-    pub(crate) fn as_mut_ptr(&mut self) -> *mut u8 {
+    pub(crate) const fn as_mut_ptr(&mut self) -> *mut u8 {
         self.ptr.as_ptr()
     }
 }
@@ -110,8 +103,6 @@ impl LeasedBuf {
         SLOW_DROP_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
-
-unsafe impl Send for LeasedBuf {}
 
 impl Deref for LeasedBuf {
     type Target = [u8];
