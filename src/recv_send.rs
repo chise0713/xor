@@ -111,13 +111,19 @@ impl<M: Mode> RecvSend<M> {
         let mut cached_local = NULL_SOCKET_ADDR;
         let method = *MethodState::current();
         while !Shutdown::requested() {
+            if let Err(e) = socket.readable().await {
+                error!("{e}");
+                break;
+            };
+
             let Some(mut buf) = BufPool::acquire() else {
                 error!("buffer pool not pooling (huh?)");
                 break;
             };
 
-            let (n, addr) = match socket.recv_from(buf.as_mut()).await {
+            let (n, addr) = match socket.try_recv_from(buf.as_mut()) {
                 Ok(v) => v,
+                Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
                 Err(e) => {
                     error!("{e}");
                     break;
