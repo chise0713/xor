@@ -97,6 +97,34 @@ unsafe fn xor(ptr: *mut u8, n: usize, token: u8, simd: u64x8) {
     tail.iter_mut().for_each(|byte| *byte ^= token);
 }
 
+#[test]
+fn test_xor_roundtrip() {
+    use crate::buf_pool::AlignBox;
+
+    let size = 256;
+
+    let mut buf = AlignBox::new(size);
+    let buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), size) };
+
+    XorToken::init(0xAA).unwrap();
+
+    let payload: Vec<u8> = (0..123).map(|x| x as u8).collect();
+    let mut n = payload.len();
+
+    buf[..n].copy_from_slice(&payload);
+    let original = payload.clone();
+
+    Xor::apply(buf, &mut n).unwrap();
+
+    assert_ne!(&buf[..n], &original);
+
+    Xor::apply(buf, &mut n).unwrap();
+
+    assert_eq!(n, original.len());
+
+    assert_eq!(&buf[..n], &original);
+}
+
 #[cfg(all(test, feature = "bench"))]
 mod bench {
     // NOTE: SIMD path uses AlignBox intentionally to reflect real-world

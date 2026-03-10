@@ -12,7 +12,7 @@ use std::{
 use anyhow::Result;
 use coarsetime::Instant;
 use log::info;
-use parking_lot::{Once, OnceState, RwLock};
+use parking_lot::RwLock;
 
 use crate::{CORASETIME_UPDATE, INIT, K, ONCE, const_concat};
 
@@ -144,7 +144,6 @@ impl LastSeen {
 }
 
 static WATCH_DOG_HANDLE: OnceLock<JoinHandle<()>> = OnceLock::new();
-static WATCH_DOG: Once = Once::new();
 
 pub struct WatchDog;
 
@@ -153,10 +152,9 @@ impl WatchDog {
         const_concat! {
             CTX = "WatchDog::start()" + ONCE
         };
-        if matches!(WATCH_DOG.state(), OnceState::Done) {
+        if WATCH_DOG_HANDLE.get().is_some() {
             return Err(Error::new(ErrorKind::AlreadyExists, CTX.as_str()))?;
         };
-        WATCH_DOG.call_once(|| {});
         WATCH_DOG_HANDLE
             .set(
                 thread::Builder::new()

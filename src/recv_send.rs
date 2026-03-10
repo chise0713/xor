@@ -116,10 +116,7 @@ impl<M: Mode> RecvSend<M> {
                 break;
             };
 
-            let Some(mut buf) = BufPool::acquire() else {
-                error!("failed to acquire a LeasedBuf");
-                break;
-            };
+            let mut buf = BufPool::acquire();
 
             let (n, addr) = match socket.try_recv_from(buf.as_mut()) {
                 Ok(v) => v,
@@ -148,10 +145,9 @@ impl<M: Mode> RecvSend<M> {
         cached_local: &mut SocketAddr,
         cached_ver: &mut usize,
     ) -> bool {
-        if matches!(M::mode(), Modes::Inbound) {
-            self.inbound_additional(addr, cached_local, cached_ver)
-        } else {
-            self.outbound_additional(cached_local, cached_ver)
+        match M::mode() {
+            Modes::Inbound => self.inbound_additional(addr, cached_local, cached_ver),
+            Modes::Outbound => self.outbound_additional(cached_local, cached_ver),
         }
     }
 

@@ -198,7 +198,7 @@ impl AsyncMain {
         // zero worker when only main thread available
         let total_threads = thread::available_parallelism()
             .map(NonZero::get)
-            .unwrap_or_default();
+            .unwrap_or(1);
         let worker_threads = total_threads.saturating_sub(MAIN_THREAD);
         let rt = if worker_threads == 0 {
             Builder::new_current_thread().enable_all().build()

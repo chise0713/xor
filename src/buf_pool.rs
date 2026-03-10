@@ -10,7 +10,6 @@ use std::{
 
 use anyhow::Result;
 use arrayvec::ArrayVec;
-use crossbeam_queue::ArrayQueue;
 use wide::u64x8;
 
 use self::sealed::BufPoolCell;
@@ -47,7 +46,7 @@ impl AlignBox {
         Self { ptr, padded_len }
     }
 
-    #[cfg(all(test, feature = "bench"))]
+    #[cfg(test)]
     pub(crate) const fn as_mut_ptr(&mut self) -> *mut u8 {
         self.ptr.as_ptr()
     }
@@ -59,8 +58,6 @@ impl Drop for AlignBox {
         unsafe { alloc::dealloc(self.ptr.as_ptr(), layout) }
     }
 }
-
-const PUSH_FAILURE: &str = "failed to push BufPool";
 
 thread_local! {
     /// small work-around of the sharing buffer pool across all threads
@@ -79,7 +76,7 @@ impl BufPool {
         Ok(())
     }
 
-    pub fn acquire() -> Option<LeasedBuf> {
+    pub fn acquire() -> LeasedBuf {
         if let Some(meta) = META_IDX_POOL.with_borrow_mut(ArrayVec::pop) {
             // # Safety
             // meta is from `META_IDX_POOL.pop()`
@@ -99,7 +96,7 @@ impl LeasedBuf {
     #[cold]
     #[inline(never)]
     fn drop_slow(&self) {
-        BufPoolCell.push(self.meta).expect(PUSH_FAILURE);
+        BufPoolCell.push(self.meta);
         SLOW_DROP_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -140,13 +137,16 @@ impl Drop for LeasedBuf {
 mod sealed {
     use std::ptr;
 
+    use parking_lot::{Condvar, Mutex};
+
     use super::*;
 
     /// FIXME: currentlly built on top of sharing buffer
     /// across all threads, but it should be consider to
     /// make every thread has it's own buffer pool
     pub(super) struct BufSlabPool {
-        available: ArrayQueue<usize>,
+        available: Mutex<Vec<usize>>,
+        cv: Condvar,
         slab: AlignBox,
         stride: usize,
     }
@@ -154,31 +154,52 @@ mod sealed {
     impl BufSlabPool {
         fn new(cap: usize, slab: AlignBox, stride: usize) -> Self {
             Self {
-                available: ArrayQueue::new(cap),
+                available: Mutex::new(Vec::from_iter(0..cap)),
+                cv: Condvar::new(),
                 slab,
                 stride,
             }
         }
 
-        pub(super) fn push(&self, meta: usize) -> Result<(), usize> {
-            self.available.push(meta)
+        pub(super) fn push(&self, meta: usize) {
+            {
+                let mut v = self.available.lock();
+
+                debug_assert!(v.len() < v.capacity());
+
+                v.push(meta);
+            }
+            self.cv.notify_one();
         }
 
-        pub(super) fn pop(&self) -> Option<LeasedBuf> {
-            let meta = self.available.pop()?;
+        pub(super) fn pop(&self) -> LeasedBuf {
+            let mut v = self.available.lock();
+            while v.is_empty() {
+                self.cv.wait(&mut v);
+            }
+            let meta = v.pop().unwrap();
             // # Safety
             // meta is from `available.pop()`
             unsafe { self.meta_to_buf(meta) }
         }
 
         // very unsafe
-        pub(super) unsafe fn meta_to_buf(&self, meta: usize) -> Option<LeasedBuf> {
+        pub(super) unsafe fn meta_to_buf(&self, meta: usize) -> LeasedBuf {
             let offset = meta * self.stride;
+
+            debug_assert!(offset < self.slab.padded_len);
+
             let ptr = ptr::slice_from_raw_parts_mut(
                 unsafe { self.slab.ptr.as_ptr().add(offset) },
                 self.stride,
             );
-            NonNull::new(ptr).map(|ptr| LeasedBuf { ptr, meta })
+
+            LeasedBuf {
+                // # Safety
+                // ptr comes from `self.slab.ptr`, which is a `NonNull<u8>`
+                ptr: unsafe { NonNull::new_unchecked(ptr) },
+                meta,
+            }
         }
     }
 
@@ -211,10 +232,6 @@ mod sealed {
                     };
                     Error::new(ErrorKind::AlreadyExists, CTX.as_str())
                 })?;
-
-            (0..cap).for_each(|i| {
-                BufPoolCell.push(i).expect(PUSH_FAILURE);
-            });
 
             Ok(())
         }

@@ -1,6 +1,6 @@
 [package]
 name = "xor"
-version = "0.1.59"
+version = "0.1.60"
 edition = "2024"
 
 [features]
@@ -11,7 +11,6 @@ bench = []
 anyhow = "^1"
 arrayvec = "^0.7"
 coarsetime = "^0.1"
-crossbeam-queue = "^0.3"
 env_logger = { version = "^0.11", default-features = false, features = [
     "humantime",
 ] }

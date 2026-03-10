@@ -188,3 +188,27 @@ impl MethodUndo for DnsPad {
         Ok(())
     }
 }
+
+#[test]
+fn test_dns_pad_roundtrip() {
+    let mut buf = [0u8; 256];
+
+    let payload = b"hello dns pad";
+    let mut n = payload.len();
+
+    buf[..n].copy_from_slice(payload);
+
+    let original = payload.to_vec();
+
+    DnsPad::apply(&mut buf, &mut n).unwrap();
+
+    assert_eq!(n, original.len() + DNS_QUERY_LEN);
+
+    assert_eq!(&buf[..DNS_QUERY_LEN], &DNS_QUERY);
+
+    DnsPad::undo(&mut buf, &mut n).unwrap();
+
+    assert_eq!(n, original.len());
+
+    assert_eq!(&buf[..n], &original);
+}
