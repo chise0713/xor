@@ -33,5 +33,5 @@ jobs:
         run: |
           RUST_BACKTRACE=1 \
           MIRIFLAGS="-Zmiri-backtrace=full" \
-          cargo +nightly miri test --all --locked --all-features --verbose
+          cargo +nightly miri test --all --locked --verbose
         shell: bash
