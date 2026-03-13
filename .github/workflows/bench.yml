@@ -29,7 +29,7 @@ jobs:
         run: |
           echo "hash=$(rustc -Ctarget-cpu=native --print cfg | sha256sum | cut -d' ' -f1)" >> $GITHUB_OUTPUT
       - name: Cache cargo registry, index, and targets
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           prefix-key: "cargo-bench-${{ steps.cpu.outputs.hash }}"
       - name: Run benchmarks
