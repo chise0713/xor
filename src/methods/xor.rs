@@ -131,7 +131,7 @@ fn test_xor_roundtrip() {
 
     XorToken::init(0xAA).unwrap();
 
-    let payload: Vec<u8> = (0..123).map(|x| x as u8).collect();
+    let payload: Box<[u8]> = (0..size).map(|x| x as u8).collect();
     let mut n = payload.len();
 
     buf[..n].copy_from_slice(&payload);
@@ -139,13 +139,13 @@ fn test_xor_roundtrip() {
 
     Xor::apply(buf, &mut n).unwrap();
 
-    assert_ne!(&buf[..n], &original);
+    assert_ne!(&buf[..n], &*original);
 
     Xor::apply(buf, &mut n).unwrap();
 
     assert_eq!(n, original.len());
 
-    assert_eq!(&buf[..n], &original);
+    assert_eq!(&buf[..n], &*original);
 }
 
 #[cfg(all(test, feature = "bench"))]
