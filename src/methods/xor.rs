@@ -1,11 +1,11 @@
 use core::slice;
-use std::sync::OnceLock;
+use std::{hint, sync::OnceLock};
 
 use anyhow::Result;
-use wide::{u64x4, u64x8};
+use wide::{u64x2, u64x4, u64x8};
 
 use super::{ApplyProof, MethodApply};
-use crate::{INIT, ONCE, const_concat};
+use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, const_concat};
 
 static TOKEN: OnceLock<u8> = OnceLock::new();
 
@@ -74,48 +74,59 @@ impl MethodApply for Xor {
 unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
     super::align_check(ptr.addr());
 
-    if token == 0 {
+    // # Safety
+    // `ptr` is checked by `super::align_check()`
+    unsafe { hint::assert_unchecked(ptr.addr().is_multiple_of(SIMD_WIDTH)) };
+
+    if token == 0 || n == 0 {
         return;
     }
 
-    let t128 = u128::from_ne_bytes([token; _]);
-    let t64 = u64::from_ne_bytes([token; _]);
-    let t32 = u32::from_ne_bytes([token; _]);
-    let t16 = u16::from_ne_bytes([token; _]);
+    let token64 = u64::from_ne_bytes([token; _]);
+    let token32 = token64 as u32;
+    let token16 = token64 as u16;
 
-    let simd8 = u64x8::splat(t64);
+    let token_simd_128 = u64x2::splat(token64);
+    let token_simd_256 = u64x4::splat(token64);
+    let token_simd_512 = u64x8::splat(token64);
 
     const CHUNK_SIZE: usize = size_of::<u64x8>();
 
     let chunks = n / CHUNK_SIZE;
 
     if chunks != 0 {
+        // # Safety
+        // `ptr` is checked by `super::align_check()`
         let data: &mut [u64x8] = unsafe { slice::from_raw_parts_mut(ptr.cast(), chunks) };
 
-        data.iter_mut().for_each(|chunk| *chunk ^= simd8);
+        data.iter_mut().for_each(|chunk| *chunk ^= token_simd_512);
     }
 
-    let base = unsafe { ptr.add(chunks * CHUNK_SIZE) };
+    let count = chunks * CHUNK_SIZE;
+    let base = unsafe { ptr.add(count) };
     let mut off = 0;
-    let tail = n - chunks * CHUNK_SIZE;
+    let tail = n - count;
+    if tail == 0 {
+        return;
+    }
 
-    // branchless tail
+    // cascading branches, tail decomposition
     macro_rules! xor_tail {
-        ($size:expr, $t:ty, $token:expr) => {
-            if tail & $size != 0 {
+        ($t:ty, $token:expr) => {
+            if tail & ::core::mem::size_of::<$t>() != 0 {
                 let v: *mut $t = unsafe { base.add(off) }.cast();
                 unsafe { *v ^= $token };
-                off += $size;
+                off += ::core::mem::size_of::<$t>();
             }
         };
     }
 
-    xor_tail!(size_of::<u64x4>(), u64x4, u64x4::splat(t64));
-    xor_tail!(size_of::<u128>(), u128, t128);
-    xor_tail!(size_of::<u64>(), u64, t64);
-    xor_tail!(size_of::<u32>(), u32, t32);
-    xor_tail!(size_of::<u16>(), u16, t16);
-    xor_tail!(size_of::<u8>(), u8, token);
+    xor_tail!(u64x4, token_simd_256);
+    xor_tail!(u64x2, token_simd_128);
+    xor_tail!(u64, token64);
+    xor_tail!(u32, token32);
+    xor_tail!(u16, token16);
+    xor_tail!(u8, token);
 
     _ = off;
 }
