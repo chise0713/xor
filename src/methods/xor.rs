@@ -104,7 +104,6 @@ unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
 
     let count = chunks * CHUNK_SIZE;
     let base = unsafe { ptr.add(count) };
-    let mut off = 0;
     let tail = n - count;
     if tail == 0 {
         return;
@@ -112,23 +111,44 @@ unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
 
     // cascading branches, tail decomposition
     macro_rules! xor_tail {
-        ($t:ty, $token:expr) => {
+        // core
+        (@core $off:ident, $t:ty, $token:expr, $advance:expr) => {
             if tail & ::core::mem::size_of::<$t>() != 0 {
-                let v: *mut $t = unsafe { base.add(off) }.cast();
+                let v: *mut $t = unsafe { base.add($off) }.cast();
                 unsafe { *v ^= $token };
-                off += ::core::mem::size_of::<$t>();
+                #[cfg($advance)]
+                {
+                    $off += ::core::mem::size_of::<$t>();
+                }
             }
+        };
+
+        // last
+        (@step $off:ident, $t:ty => $token:expr;) => {
+            xor_tail!(@core $off, $t, $token, false);
+        };
+
+        // step
+        (@step $off:ident, $t:ty => $token:expr; $($rest:tt)+) => {
+            xor_tail!(@core $off, $t, $token, true);
+            xor_tail!(@step $off, $($rest)+);
+        };
+
+        // enter
+        ($($tt:tt)+) => {
+            let mut off = 0;
+            xor_tail!(@step off, $($tt)+);
         };
     }
 
-    xor_tail!(u64x4, token_simd_256);
-    xor_tail!(u64x2, token_simd_128);
-    xor_tail!(u64, token64);
-    xor_tail!(u32, token32);
-    xor_tail!(u16, token16);
-    xor_tail!(u8, token);
-
-    _ = off;
+    xor_tail! {
+        u64x4 => token_simd_256;
+        u64x2 => token_simd_128;
+        u64   => token64;
+        u32   => token32;
+        u16   => token16;
+        u8    => token;
+    }
 }
 
 #[test]

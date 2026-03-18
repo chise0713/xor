@@ -8,7 +8,7 @@ mod _s {
     // 1 byte (\x0C) + 12 bytes ("root-servers") +
     // 1 byte (\x03) + 3 bytes ("net") +
     // 1 byte (\x00) = 18 bytes
-    pub const NAME_LEN: usize = 18;
+    const NAME_LEN: usize = 18;
     pub const Q_LEN: usize = NAME_LEN + 2 + 2; // Name + Type(2) + Class(2) = 22
 }
 
