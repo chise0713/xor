@@ -167,10 +167,16 @@ fn test_xor_roundtrip() {
 
     buf[..n].copy_from_slice(&payload);
     let original = payload.clone();
+    let normal_xor = {
+        let mut payload = payload.clone();
+        payload.iter_mut().for_each(|b| *b ^= 0xAA);
+        payload
+    };
 
     Xor::apply(buf, &mut n).unwrap();
 
     assert_ne!(&buf[..n], &*original);
+    assert_eq!(&buf[..n], &*normal_xor);
 
     Xor::apply(buf, &mut n).unwrap();
 
