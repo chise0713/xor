@@ -35,7 +35,7 @@ impl XorToken {
 mod proof {
     use super::*;
 
-    pub struct XorApplyProof {
+    pub(super) struct XorApplyProof {
         _token: (),
     }
 
@@ -44,7 +44,7 @@ mod proof {
     }
 
     impl Xor {
-        pub fn check_apply() -> Option<XorApplyProof> {
+        pub(super) const fn check_apply() -> Option<XorApplyProof> {
             Some(XorApplyProof { _token: () })
         }
     }

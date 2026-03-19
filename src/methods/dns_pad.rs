@@ -110,7 +110,7 @@ pub fn payload_bound_check(payload_max: usize) -> bool {
 mod proof {
     use super::*;
 
-    pub struct DnsPadApplyProof {
+    pub(super) struct DnsPadApplyProof {
         _token: (),
     }
 
@@ -118,7 +118,7 @@ mod proof {
         type Method = DnsPad;
     }
 
-    pub struct DnsPadUndoProof {
+    pub(super) struct DnsPadUndoProof {
         _token: (),
     }
 
@@ -127,12 +127,26 @@ mod proof {
     }
 
     impl DnsPad {
-        pub fn check_apply(buf_len: usize, n: usize) -> Option<DnsPadApplyProof> {
-            (buf_len > n + DNS_QUERY_LEN).then_some(DnsPadApplyProof { _token: () })
+        pub(super) const fn check_apply(buf_len: usize, n: usize) -> Option<DnsPadApplyProof> {
+            // https://github.com/rust-lang/rust/issues/151531
+            // https://github.com/rust-lang/rust/issues/143874
+            // (buf_len > n + DNS_QUERY_LEN).then_some(DnsPadApplyProof { _token: () })
+            if buf_len > n + DNS_QUERY_LEN {
+                Some(DnsPadApplyProof { _token: () })
+            } else {
+                None
+            }
         }
 
-        pub fn check_undo(n: usize) -> Option<DnsPadUndoProof> {
-            (n >= DNS_QUERY_LEN).then_some(DnsPadUndoProof { _token: () })
+        pub(super) const fn check_undo(n: usize) -> Option<DnsPadUndoProof> {
+            // https://github.com/rust-lang/rust/issues/151531
+            // https://github.com/rust-lang/rust/issues/143874
+            // (n >= DNS_QUERY_LEN).then_some(DnsPadUndoProof { _token: () })
+            if n >= DNS_QUERY_LEN {
+                Some(DnsPadUndoProof { _token: () })
+            } else {
+                None
+            }
         }
     }
 }

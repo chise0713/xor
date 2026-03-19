@@ -78,12 +78,12 @@ impl ConnectCtx {
     }
 
     #[inline(always)]
-    pub fn disconnect() {
+    fn disconnect() {
         CONNECTED.store(false, Ordering::Release);
     }
 
     #[inline(always)]
-    pub fn try_connect() -> bool {
+    fn try_connect() -> bool {
         CONNECTED
             .compare_exchange(false, true, Ordering::Release, Ordering::Acquire)
             .is_ok()
