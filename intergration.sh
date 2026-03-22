@@ -161,7 +161,8 @@ tmux select-window -t "$SESSION":0
 tmux split-window -v \
 	"sh -c \"\"$TARGET_DIR\"/release/xor \
             -l127.0.0.1:12345 -r127.0.0.2:12345 -t0x30 -o5 -m$mtu_size $method_opt; sleep infinity\""
-tmux bind-key -n k send-keys -t 0.1 C-c
+tmux bind-key -n k if-shell -F '#{!=:#{@sent_once},1}' \
+  'send-keys -t 0.1 C-c; set -pt 0.1 @sent_once 1'
 
 tmux split-window -v \
 	"exec env XDG_CONFIG_HOME=\"$HTOP_TEMP_DIR\" htop \
