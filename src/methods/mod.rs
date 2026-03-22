@@ -22,40 +22,11 @@ use anyhow::Result;
 use crate::{INIT, ONCE, const_concat};
 
 pub trait MethodApply {
-    unsafe fn apply_unsafe<P>(_proof: P, ptr: *mut u8, n: &mut usize)
-    where
-        P: ApplyProof<Method = Self>;
-    /// Safe wrapper around `apply_unsafe`, performs bounds checking.
     fn apply(buf: &mut [u8], n: &mut usize) -> Result<()>;
 }
 
 pub trait MethodUndo {
-    unsafe fn undo_unsafe<P>(_proof: P, ptr: *mut u8, n: &mut usize)
-    where
-        P: UndoProof<Method = Self>;
-    /// Safe wrapper around `undo_unsafe`, performs bounds checking.
     fn undo(buf: &mut [u8], n: &mut usize) -> Result<()>;
-}
-
-/// temporary proof. if the buffer is mutated,
-/// then the proof is no-longer valuable
-pub trait ApplyProof {
-    type Method;
-}
-
-/// temporary proof. if the buffer is mutated,
-/// then the proof is no-longer valuable
-pub trait UndoProof {
-    type Method;
-}
-
-#[inline(always)]
-fn align_check(ptr: usize) {
-    use crate::buf_pool::SIMD_WIDTH;
-
-    if !ptr.is_multiple_of(SIMD_WIDTH) {
-        unreachable!("buf must be {}B aligned", SIMD_WIDTH)
-    }
 }
 
 #[repr(usize)]

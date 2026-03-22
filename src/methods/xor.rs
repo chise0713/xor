@@ -1,6 +1,5 @@
 use core::slice;
 use std::{
-    hint,
     io::{Error, ErrorKind},
     sync::OnceLock,
 };
@@ -8,7 +7,7 @@ use std::{
 use anyhow::Result;
 use wide::{u64x2, u64x4, u64x8};
 
-use super::{ApplyProof, MethodApply};
+use super::MethodApply;
 use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, const_concat};
 
 static TOKEN: OnceLock<u8> = OnceLock::new();
@@ -17,12 +16,13 @@ pub struct XorToken;
 
 impl XorToken {
     pub fn init(val: u8) -> Result<()> {
-        const_concat! {
-            CTX = "XorToken::set()" + ONCE
+        let exist = |_| {
+            const_concat! {
+                CTX = "XorToken::set()" + ONCE
+            };
+            Error::new(ErrorKind::AlreadyExists, CTX.as_str())
         };
-        TOKEN
-            .set(val)
-            .map_err(|_| Error::new(ErrorKind::AlreadyExists, CTX.as_str()))?;
+        TOKEN.set(val).map_err(exist)?;
         Ok(())
     }
 
@@ -36,53 +36,24 @@ impl XorToken {
     }
 }
 
-// ZST proof token with private field,
-// can only be constructed by the module
-mod proof {
-    use super::*;
-
-    pub(super) struct XorApplyProof {
-        _token: (),
-    }
-
-    impl ApplyProof for XorApplyProof {
-        type Method = Xor;
-    }
-
-    impl Xor {
-        pub(super) const fn check_apply() -> Option<XorApplyProof> {
-            Some(XorApplyProof { _token: () })
-        }
-    }
-}
-
 pub struct Xor;
 
 impl MethodApply for Xor {
     #[inline(always)]
-    unsafe fn apply_unsafe<P>(_proof: P, ptr: *mut u8, n: &mut usize)
-    where
-        P: super::ApplyProof<Method = Self>,
-    {
-        let token = XorToken::get();
-        unsafe { xor(ptr, *n, token) }
-    }
-
-    #[inline(always)]
     fn apply(buf: &mut [u8], n: &mut usize) -> Result<()> {
-        let proof = Self::check_apply().unwrap();
-        unsafe { Self::apply_unsafe(proof, buf.as_mut_ptr(), n) };
+        let token = XorToken::get();
+        unsafe { xor(buf.as_mut_ptr(), *n, token) }
         Ok(())
     }
 }
 
 #[inline(always)]
 unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
-    super::align_check(ptr.addr());
+    let aligned = ptr.addr().is_multiple_of(SIMD_WIDTH);
 
-    // # Safety
-    // `ptr` is checked by `super::align_check()`
-    unsafe { hint::assert_unchecked(ptr.addr().is_multiple_of(SIMD_WIDTH)) };
+    if !aligned {
+        unreachable!("buf must be {}B aligned", SIMD_WIDTH)
+    }
 
     if token == 0 || n == 0 {
         return;
@@ -161,21 +132,23 @@ unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
 fn test_xor_roundtrip() {
     use crate::buf_pool::AlignBox;
 
-    let size = 256;
+    const SIZE: usize = 256;
 
-    let mut buf = AlignBox::new(size);
-    let buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), size) };
+    let mut buf = AlignBox::new(SIZE);
+    let buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), SIZE) };
 
-    XorToken::init(0xAA).unwrap();
+    const TOKEN: u8 = 0xAA;
 
-    let payload: Box<[u8]> = (0..size).map(|x| x as u8).collect();
+    XorToken::init(TOKEN).unwrap();
+
+    let payload: Box<[u8]> = (0..SIZE).map(|x| x as u8).collect();
     let mut n = payload.len();
 
     buf[..n].copy_from_slice(&payload);
     let original = payload.clone();
     let normal_xor = {
         let mut payload = payload.clone();
-        payload.iter_mut().for_each(|b| *b ^= 0xAA);
+        payload.iter_mut().for_each(|b| *b ^= TOKEN);
         payload
     };
 

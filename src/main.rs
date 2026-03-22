@@ -208,7 +208,7 @@ impl AsyncMain {
                 .thread_stack_size(WORKER_STACK_SIZE)
                 .thread_name_fn(move || {
                     static ID: AtomicUsize = AtomicUsize::new(0);
-                    let id = ID.fetch_add(1, Ordering::SeqCst);
+                    let id = ID.fetch_add(1, Ordering::Relaxed);
                     format!("{method}-{id}")
                 })
                 .worker_threads(worker_threads)

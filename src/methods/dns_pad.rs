@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 
-use super::{ApplyProof, MethodApply, MethodUndo, UndoProof};
+use super::{MethodApply, MethodUndo};
 
 mod _s {
     // those header were wrote by gemini
@@ -105,49 +105,13 @@ pub fn payload_bound_check(payload_max: usize) -> bool {
     payload_max > DNS_QUERY_LEN
 }
 
-// ZST proof token with private field,
-// can only be constructed by the module
-mod proof {
-    use super::*;
-
-    pub(super) struct DnsPadApplyProof {
-        _token: (),
+impl DnsPad {
+    pub(super) const fn check_apply(buf_len: usize, n: usize) -> bool {
+        buf_len > n + DNS_QUERY_LEN
     }
 
-    impl ApplyProof for DnsPadApplyProof {
-        type Method = DnsPad;
-    }
-
-    pub(super) struct DnsPadUndoProof {
-        _token: (),
-    }
-
-    impl UndoProof for DnsPadUndoProof {
-        type Method = DnsPad;
-    }
-
-    impl DnsPad {
-        pub(super) const fn check_apply(buf_len: usize, n: usize) -> Option<DnsPadApplyProof> {
-            // https://github.com/rust-lang/rust/issues/151531
-            // https://github.com/rust-lang/rust/issues/143874
-            // (buf_len > n + DNS_QUERY_LEN).then_some(DnsPadApplyProof { _token: () })
-            if buf_len > n + DNS_QUERY_LEN {
-                Some(DnsPadApplyProof { _token: () })
-            } else {
-                None
-            }
-        }
-
-        pub(super) const fn check_undo(n: usize) -> Option<DnsPadUndoProof> {
-            // https://github.com/rust-lang/rust/issues/151531
-            // https://github.com/rust-lang/rust/issues/143874
-            // (n >= DNS_QUERY_LEN).then_some(DnsPadUndoProof { _token: () })
-            if n >= DNS_QUERY_LEN {
-                Some(DnsPadUndoProof { _token: () })
-            } else {
-                None
-            }
-        }
+    pub(super) const fn check_undo(n: usize) -> bool {
+        n >= DNS_QUERY_LEN
     }
 }
 
@@ -158,47 +122,39 @@ pub struct DnsPad;
 
 impl MethodApply for DnsPad {
     #[inline(always)]
-    unsafe fn apply_unsafe<P>(_proof: P, ptr: *mut u8, n: &mut usize)
-    where
-        P: ApplyProof<Method = Self>,
-    {
-        let len = *n;
-        unsafe {
-            core::ptr::copy(ptr.cast_const(), ptr.add(DNS_QUERY_LEN), len);
-            core::ptr::copy(DNS_QUERY.as_ptr(), ptr, DNS_QUERY_LEN);
-        };
-        *n = len + DNS_QUERY_LEN;
-    }
-
-    #[inline(always)]
     fn apply(buf: &mut [u8], n: &mut usize) -> Result<()> {
-        let Some(proof) = Self::check_apply(buf.len(), *n) else {
+        let len = *n;
+
+        if !Self::check_apply(buf.len(), len) {
             bail!("dns pad overflow: cap={}, n={n}", buf.len());
         };
-        unsafe { Self::apply_unsafe(proof, buf.as_mut_ptr(), n) };
+
+        let ptr = buf.as_mut_ptr();
+        unsafe {
+            core::ptr::copy(ptr.cast_const(), ptr.add(DNS_QUERY_LEN), len);
+            core::ptr::copy_nonoverlapping(DNS_QUERY.as_ptr(), ptr, DNS_QUERY_LEN);
+        };
+        *n = len + DNS_QUERY_LEN;
+
         Ok(())
     }
 }
 
 impl MethodUndo for DnsPad {
     #[inline(always)]
-    unsafe fn undo_unsafe<P>(_proof: P, ptr: *mut u8, n: &mut usize)
-    where
-        P: UndoProof<Method = Self>,
-    {
+    fn undo(buf: &mut [u8], n: &mut usize) -> Result<()> {
+        if !Self::check_undo(*n) {
+            bail!("dns unpad underflow: {n} < {DNS_QUERY_LEN}");
+        };
+
         let len = *n - DNS_QUERY_LEN;
+
+        let ptr = buf.as_mut_ptr();
         unsafe {
             core::ptr::copy(ptr.add(DNS_QUERY_LEN), ptr, len);
         };
         *n = len;
-    }
 
-    #[inline(always)]
-    fn undo(buf: &mut [u8], n: &mut usize) -> Result<()> {
-        let Some(proof) = Self::check_undo(*n) else {
-            bail!("dns unpad underflow: {n} < {DNS_QUERY_LEN}");
-        };
-        unsafe { Self::undo_unsafe(proof, buf.as_mut_ptr(), n) };
         Ok(())
     }
 }
@@ -207,12 +163,10 @@ impl MethodUndo for DnsPad {
 fn test_dns_pad_roundtrip() {
     let mut buf = [0u8; 256];
 
-    let payload = b"hello dns pad";
-    let mut n = payload.len();
+    let original = b"hello dns pad";
+    let mut n = original.len();
 
-    buf[..n].copy_from_slice(payload);
-
-    let original = payload.to_vec();
+    buf[..n].copy_from_slice(original);
 
     DnsPad::apply(&mut buf, &mut n).unwrap();
 
@@ -224,5 +178,5 @@ fn test_dns_pad_roundtrip() {
 
     assert_eq!(n, original.len());
 
-    assert_eq!(&buf[..n], &original);
+    assert_eq!(&buf[..n], original);
 }
