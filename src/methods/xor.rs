@@ -1,5 +1,9 @@
 use core::slice;
-use std::{hint, sync::OnceLock};
+use std::{
+    hint,
+    io::{Error, ErrorKind},
+    sync::OnceLock,
+};
 
 use anyhow::Result;
 use wide::{u64x2, u64x4, u64x8};
@@ -16,7 +20,9 @@ impl XorToken {
         const_concat! {
             CTX = "XorToken::set()" + ONCE
         };
-        TOKEN.set(val).expect(&CTX);
+        TOKEN
+            .set(val)
+            .map_err(|_| Error::new(ErrorKind::AlreadyExists, CTX.as_str()))?;
         Ok(())
     }
 
