@@ -12,8 +12,8 @@ on:
   pull_request:
 
 jobs:
-  bench:
-    name: Bench
+  test:
+    name: Unit Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
