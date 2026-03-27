@@ -59,11 +59,7 @@ unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
     }
 
     let token64 = u64::from_ne_bytes([token; _]);
-    let token32 = token64 as u32;
-    let token16 = token64 as u16;
 
-    let token_simd_128 = u64x2::splat(token64);
-    let token_simd_256 = u64x4::splat(token64);
     let token_simd_512 = u64x8::splat(token64);
 
     const CHUNK_SIZE: usize = size_of::<u64x8>();
@@ -118,11 +114,11 @@ unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
     }
 
     xor_tail! {
-        u64x4 => token_simd_256;
-        u64x2 => token_simd_128;
+        u64x4 => u64x4::splat(token64);
+        u64x2 => u64x2::splat(token64);
         u64   => token64;
-        u32   => token32;
-        u16   => token16;
+        u32   => token64 as u32;
+        u16   => token64 as u16;
         u8    => token;
     }
 }
