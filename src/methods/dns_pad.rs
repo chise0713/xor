@@ -121,7 +121,6 @@ impl DnsPad {
 pub struct DnsPad;
 
 impl MethodApply for DnsPad {
-    #[inline(always)]
     fn apply(buf: &mut [u8], n: &mut usize) -> Result<()> {
         let len = *n;
 
@@ -141,7 +140,6 @@ impl MethodApply for DnsPad {
 }
 
 impl MethodUndo for DnsPad {
-    #[inline(always)]
     fn undo(buf: &mut [u8], n: &mut usize) -> Result<()> {
         if !Self::check_undo(*n) {
             bail!("dns unpad underflow: {n} < {DNS_QUERY_LEN}");

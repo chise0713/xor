@@ -28,7 +28,7 @@ pub mod mode {
 
         fn socket() -> Socket;
 
-        #[inline(always)]
+        #[inline]
         fn mode() -> Modes {
             Self::MODE
         }
@@ -66,7 +66,6 @@ pub struct RecvSend<M: Mode> {
 }
 
 impl<M: Mode> RecvSend<M> {
-    #[inline(always)]
     fn send(
         &self,
         buf: &mut [u8],
@@ -182,6 +181,7 @@ impl<M: Mode> RecvSend<M> {
 
     /// `&cached_local` will be pass into send
     /// Socket::Inbound.try_send_to(buf, addr)
+    #[inline]
     #[must_use]
     fn outbound_additional(&self, cached_local: &mut SocketAddr, cached_ver: &mut usize) -> bool {
         if LocalAddr::check_and_update(cached_ver) {

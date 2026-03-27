@@ -27,7 +27,7 @@ impl XorToken {
     }
 
     #[must_use]
-    #[inline(always)]
+    #[inline]
     fn get() -> u8 {
         const_concat! {
             CTX = "XorToken::get()" + INIT
@@ -47,7 +47,6 @@ impl MethodApply for Xor {
     }
 }
 
-#[inline(always)]
 unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
     let aligned = ptr.addr().is_multiple_of(SIMD_WIDTH);
 

@@ -33,7 +33,6 @@ impl AlignBox {
         size.div_ceil(Self::align()) * Self::align()
     }
 
-    #[inline(always)]
     fn layout(padded_len: usize) -> Layout {
         Layout::from_size_align(padded_len, Self::align()).unwrap()
     }
@@ -104,14 +103,12 @@ impl LeasedBuf {
 impl Deref for LeasedBuf {
     type Target = [u8];
 
-    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         unsafe { self.ptr.as_ref() }
     }
 }
 
 impl DerefMut for LeasedBuf {
-    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.ptr.as_mut() }
     }
@@ -213,7 +210,6 @@ mod sealed {
     impl Deref for BufPoolCell {
         type Target = BufSlabPool;
 
-        #[inline(always)]
         fn deref(&self) -> &Self::Target {
             const_concat! {
                 CTX = "BufPool: " + INIT

@@ -28,7 +28,6 @@ pub enum Socket {
 impl Deref for Socket {
     type Target = UdpSocket;
 
-    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         const_concat! {
             CTX_I = "Socket::Inbound: " + INIT,
@@ -44,7 +43,6 @@ impl Deref for Socket {
 impl Not for Socket {
     type Output = Self;
 
-    #[inline(always)]
     fn not(self) -> Self::Output {
         match self {
             Socket::Inbound => Socket::Outbound,
@@ -54,7 +52,6 @@ impl Not for Socket {
 }
 
 impl Display for Socket {
-    #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Inbound => "inbound",

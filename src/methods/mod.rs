@@ -47,7 +47,6 @@ impl Method {
         }
     }
 
-    #[inline(always)]
     pub fn run(self, from_outbound: bool, buf: &mut [u8], n: &mut usize) -> Result<()> {
         match self {
             Method::DnsPad | Method::DnsUnPad => {

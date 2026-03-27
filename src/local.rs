@@ -26,14 +26,14 @@ pub struct LocalAddr;
 
 impl LocalAddr {
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn version() -> usize {
         LOCAL_ADDR_VERSION.load(Ordering::Relaxed)
     }
 
     /// returns `false` when `glob_ver` equals to `ver`
     #[must_use]
-    #[inline(always)]
+    #[inline]
     pub fn check_and_update(ver: &mut usize) -> bool {
         let glob_ver = Self::version();
         if *ver != glob_ver {
@@ -44,12 +44,11 @@ impl LocalAddr {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn current() -> SocketAddr {
         *LOCAL_ADDR.read()
     }
 
-    #[inline(always)]
     fn set(addr: SocketAddr) {
         *LOCAL_ADDR.write() = addr;
         LOCAL_ADDR_VERSION.fetch_add(1, Ordering::Release);
@@ -72,17 +71,15 @@ impl ConnectCtx {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_connected() -> bool {
         CONNECTED.load(Ordering::Acquire)
     }
 
-    #[inline(always)]
     fn disconnect() {
         CONNECTED.store(false, Ordering::Release);
     }
 
-    #[inline(always)]
     fn try_connect() -> bool {
         CONNECTED
             .compare_exchange(false, true, Ordering::Release, Ordering::Acquire)
@@ -95,7 +92,6 @@ static START: OnceLock<Instant> = OnceLock::new();
 pub struct Started;
 
 impl Started {
-    #[inline(always)]
     pub fn now() -> Result<()> {
         let exist = |_| {
             const_concat! {
@@ -107,7 +103,6 @@ impl Started {
         Ok(())
     }
 
-    #[inline(always)]
     fn at() -> Instant {
         const_concat! {
            CTX = "Socket::at(): " + INIT
@@ -123,7 +118,6 @@ static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
 pub struct LastSeen;
 
 impl LastSeen {
-    #[inline(always)]
     pub fn now() {
         let current_time = Started::at().elapsed().as_millis();
         let last = LAST_SEEN.load(Ordering::Relaxed);
@@ -132,7 +126,6 @@ impl LastSeen {
         }
     }
 
-    #[inline(always)]
     fn elapsed() -> Duration {
         Duration::from_millis(
             Started::at()
@@ -166,7 +159,6 @@ impl WatchDog {
         Ok(())
     }
 
-    #[inline(always)]
     fn unpark() {
         const_concat! {
             CTX = "WatchDog::unpark()" + INIT
@@ -175,7 +167,6 @@ impl WatchDog {
     }
 }
 
-#[inline(always)]
 fn watchdog(timeout: f64) {
     let timeout_dur = Duration::from_secs_f64(timeout);
     let park_dur = Duration::from_secs_f64(timeout.div_euclid(3.));

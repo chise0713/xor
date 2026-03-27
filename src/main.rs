@@ -148,13 +148,11 @@ fn main() -> Result<ExitCode> {
             };
         }
 
-        Method::DnsPad => {
+        Method::DnsPad | Method::DnsUnPad => {
             if !dns_pad::payload_bound_check(payload_max) {
                 return args::invalid_argument();
             }
         }
-
-        Method::DnsUnPad => {}
     };
     // end parsing
 
@@ -248,11 +246,11 @@ impl AsyncMain {
         });
         let local_set = LocalSet::new();
         join_set.spawn_local_on(RecvSend::recv(Outbound), &local_set);
+        join_set.spawn_local_on(RecvSend::recv(Inbound), &local_set);
 
         info!("service started");
 
         let mut exit_code = ExitCode::FAILURE;
-        let mut net_fail = false;
 
         tokio::select! {
             r = signal::ctrl_c() => {
@@ -265,18 +263,11 @@ impl AsyncMain {
                 }
                 Shutdown::request();
             },
-            _ = join_set.join_next() => {
-                net_fail = true;
-            },
-            _ = local_set.run_until(RecvSend::recv(Inbound)) => {
-                net_fail = true;
+            _ = local_set.run_until(join_set.join_next()) => {
+                error!("a network recv task exited prematurely");
             }
         }
         join_set.abort_all();
-
-        if net_fail {
-            error!("a network recv task exited prematurely");
-        }
 
         if log_enabled!(Level::Trace) {
             let n = N.load(Ordering::Relaxed);
