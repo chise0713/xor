@@ -162,7 +162,7 @@ mod sealed {
             {
                 let mut v = self.available.lock();
 
-                debug_assert!(v.len() < v.capacity());
+                assert!(v.len() < v.capacity());
 
                 v.push(meta);
             }
@@ -184,7 +184,7 @@ mod sealed {
         pub(super) unsafe fn meta_to_buf(&self, meta: usize) -> LeasedBuf {
             let offset = meta * self.stride;
 
-            debug_assert!(offset < self.slab.padded_len);
+            assert!(offset < self.slab.padded_len);
 
             let ptr = ptr::slice_from_raw_parts_mut(
                 unsafe { self.slab.ptr.as_ptr().add(offset) },
