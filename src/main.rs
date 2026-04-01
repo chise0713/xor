@@ -240,11 +240,11 @@ impl AsyncMain {
                     $spawner($task);
                 )*
 
-                const TASK_COUNT: usize = <[()]>::len(&[
+                const TASK_COUNT: usize = [
                     $(
-                        { let _ = stringify!($task); }
+                        stringify!($task)
                     ),*
-                ]);
+                ].len();
 
                 const { assert!(TASK_COUNT == TASK_PER_THREAD) };
             }};
