@@ -229,24 +229,41 @@ impl AsyncMain {
         ))
     }
 
-    #[inline(always)]
     async fn enter(self) -> Result<ExitCode> {
         use crate::recv_send::mode::{Inbound, Outbound};
 
         self.sockets.convert()?;
 
+        macro_rules! spawn_tasks {
+            ($spawner:expr, $($task:expr),* $(,)?) => {{
+                $(
+                    $spawner($task);
+                )*
+
+                const TASK_COUNT: usize = <[()]>::len(&[
+                    $(
+                        { let _ = stringify!($task); }
+                    ),*
+                ]);
+
+                const { assert!(TASK_COUNT == TASK_PER_THREAD) };
+            }};
+        }
+
         let mut join_set = JoinSet::new();
         (0..self.worker_threads).for_each(|_| {
-            let mut i = 0;
-            join_set.spawn(RecvSend::recv(Outbound));
-            i += 1;
-            join_set.spawn(RecvSend::recv(Inbound));
-            i += 1;
-            assert_eq!(i, TASK_PER_THREAD);
+            spawn_tasks! {
+                |task| join_set.spawn(task),
+                RecvSend::recv(Outbound),
+                RecvSend::recv(Inbound),
+            };
         });
         let local_set = LocalSet::new();
-        join_set.spawn_local_on(RecvSend::recv(Outbound), &local_set);
-        join_set.spawn_local_on(RecvSend::recv(Inbound), &local_set);
+        spawn_tasks! {
+            |task| join_set.spawn_local_on(task, &local_set),
+            RecvSend::recv(Outbound),
+            RecvSend::recv(Inbound),
+        };
 
         info!("service started");
 
