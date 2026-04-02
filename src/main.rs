@@ -235,7 +235,7 @@ impl AsyncMain {
         self.sockets.convert()?;
 
         macro_rules! spawn_tasks {
-            ($spawner:expr, $($task:expr),* $(,)?) => {{
+            ($spawner:expr, $($task:expr),* $(,)?) => {
                 $(
                     $spawner($task);
                 )*
@@ -246,8 +246,9 @@ impl AsyncMain {
                     ),*
                 ].len();
 
-                const { assert!(TASK_COUNT == TASK_PER_THREAD) };
-            }};
+                // cargo check
+                const _: [(); TASK_PER_THREAD] = [(); TASK_COUNT];
+            };
         }
 
         let mut join_set = JoinSet::new();
