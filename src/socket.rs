@@ -18,7 +18,6 @@ const SEND_BUF_SIZE: usize = RECV_BUF_SIZE;
 static INBOUND_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
 static OUTBOUND_SOCKET: OnceLock<UdpSocket> = OnceLock::new();
 
-#[repr(usize)]
 #[derive(Debug, Clone, Copy)]
 pub enum Socket {
     Inbound,
