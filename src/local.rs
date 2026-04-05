@@ -5,7 +5,7 @@ use std::{
         OnceLock,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
-    thread::{self, JoinHandle},
+    thread::{self, Thread},
     time::Duration,
 };
 
@@ -136,7 +136,7 @@ impl LastSeen {
     }
 }
 
-static WATCH_DOG_HANDLE: OnceLock<JoinHandle<()>> = OnceLock::new();
+static WATCH_DOG_HANDLE: OnceLock<Thread> = OnceLock::new();
 
 pub struct WatchDog;
 
@@ -153,7 +153,9 @@ impl WatchDog {
                 thread::Builder::new()
                     .name("clnt-wdog".to_string())
                     .stack_size(16 * K)
-                    .spawn(move || watchdog(timeout))?,
+                    .spawn(move || watchdog(timeout))?
+                    .thread()
+                    .clone(),
             )
             .expect(&CTX);
         Ok(())
@@ -163,7 +165,7 @@ impl WatchDog {
         const_concat! {
             CTX = "WatchDog::unpark()" + INIT
         };
-        WATCH_DOG_HANDLE.get().expect(&CTX).thread().unpark()
+        WATCH_DOG_HANDLE.get().expect(&CTX).unpark()
     }
 }
 
