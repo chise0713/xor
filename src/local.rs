@@ -28,7 +28,7 @@ impl LocalAddr {
     #[must_use]
     #[inline]
     pub fn version() -> usize {
-        LOCAL_ADDR_VERSION.load(Ordering::Relaxed)
+        LOCAL_ADDR_VERSION.load(Ordering::Acquire)
     }
 
     /// returns `false` when `glob_ver` equals to `ver`
@@ -173,13 +173,11 @@ fn watchdog(timeout: f64) {
     UPDATE_INTERVAL.fetch_max(park_dur.as_millis().div_ceil(2) as u64, Ordering::Relaxed);
 
     loop {
-        let park_dur = if ConnectCtx::is_connected() {
-            park_dur
+        if ConnectCtx::is_connected() {
+            thread::park_timeout(park_dur);
         } else {
-            Duration::MAX
+            thread::park();
         };
-
-        thread::park_timeout(park_dur);
 
         if LastSeen::elapsed() < timeout_dur {
             continue;
