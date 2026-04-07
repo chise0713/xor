@@ -82,22 +82,26 @@ impl<M: Mode> RecvSend<M> {
 
         // Socket::Inbound.recv_from() -> process -> Socket::Outbound.send()
         // Socket::Outbound.recv() -> process -> Socket::Inbound.send_to()
-        if let Err(e) = if from_outbound {
-            socket.try_send_to(&buf[..n], cached_local)
-        } else {
-            socket.try_send(&buf[..n])
-        } {
-            match e.kind() {
-                ErrorKind::WouldBlock => {
-                    warn_limit_global!(1, WARN_LIMIT_DUR, "{socket} tx full, dropping");
-                }
-                _ => {
-                    if Shutdown::try_request() {
-                        error!("{socket} socket: {e}");
+        loop {
+            if let Err(e) = if from_outbound {
+                socket.try_send_to(&buf[..n], cached_local)
+            } else {
+                socket.try_send(&buf[..n])
+            } {
+                match e.kind() {
+                    ErrorKind::WouldBlock => {
+                        warn_limit_global!(1, WARN_LIMIT_DUR, "{socket} tx full, dropping");
+                    }
+                    ErrorKind::Interrupted => continue,
+                    _ => {
+                        if Shutdown::try_request() {
+                            error!("{socket} socket: {e}");
+                        }
                     }
                 }
             }
-        };
+            break;
+        }
     }
 
     pub async fn recv(mode: M) {
@@ -106,10 +110,13 @@ impl<M: Mode> RecvSend<M> {
             _marker: PhantomData,
         };
         let socket = M::socket();
+
         let mut cached_ver = 0;
         let mut cached_local = NULL_SOCKET_ADDR;
+
         let method = *MethodState::current();
-        while !Shutdown::requested() {
+
+        'outer: while !Shutdown::requested() {
             if let Err(e) = socket.readable().await {
                 error!("{e}");
                 break;
@@ -117,23 +124,26 @@ impl<M: Mode> RecvSend<M> {
 
             let mut buf = BufPool::acquire();
 
-            let (n, addr) = match socket.try_recv_from(buf.as_mut()) {
-                Ok(v) => v,
-                Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
-                Err(e) => {
-                    error!("{e}");
-                    break;
+            loop {
+                let (n, addr) = match socket.try_recv_from(buf.as_mut()) {
+                    Ok(v) => v,
+                    Err(e) if matches!(e.kind(), ErrorKind::WouldBlock) => break,
+                    Err(e) if matches!(e.kind(), ErrorKind::Interrupted) => continue,
+                    Err(e) => {
+                        error!("{e}");
+                        break 'outer;
+                    }
+                };
+                if log_enabled!(Level::Trace) {
+                    N.fetch_max(n, Ordering::Relaxed);
                 }
-            };
-            if log_enabled!(Level::Trace) {
-                N.fetch_max(n, Ordering::Relaxed);
-            }
 
-            if this.additional(addr, &mut cached_local, &mut cached_ver) {
-                continue;
-            }
+                if this.additional(addr, &mut cached_local, &mut cached_ver) {
+                    continue;
+                }
 
-            this.send(&mut buf, n, !socket, method, cached_local);
+                this.send(&mut buf, n, !socket, method, cached_local);
+            }
         }
     }
 
