@@ -1,7 +1,7 @@
 use core::slice;
 use std::{
     io::{Error, ErrorKind},
-    sync::OnceLock,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use anyhow::Result;
@@ -10,19 +10,28 @@ use wide::{u64x2, u64x4, u64x8};
 use super::MethodApply;
 use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, const_concat};
 
-static TOKEN: OnceLock<u8> = OnceLock::new();
+static TOKEN: AtomicUsize = AtomicUsize::new(XorToken::SENTINEL);
 
 pub struct XorToken;
 
 impl XorToken {
+    const SENTINEL: usize = 1 << 8;
+
     pub fn init(val: u8) -> Result<()> {
-        let exist = |_| {
+        if TOKEN
+            .compare_exchange(
+                Self::SENTINEL,
+                val as usize,
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
+            .is_err()
+        {
             const_concat! {
                 CTX = "XorToken::set()" + ONCE
             };
-            Error::new(ErrorKind::AlreadyExists, CTX.as_str())
+            return Err(Error::new(ErrorKind::AlreadyExists, CTX.as_str()))?;
         };
-        TOKEN.set(val).map_err(exist)?;
         Ok(())
     }
 
@@ -32,7 +41,14 @@ impl XorToken {
         const_concat! {
             CTX = "XorToken::get()" + INIT
         };
-        *TOKEN.get().expect(&CTX)
+
+        let val = TOKEN.load(Ordering::Acquire);
+
+        if val == Self::SENTINEL {
+            panic!("{}", CTX);
+        }
+
+        val as u8
     }
 }
 
