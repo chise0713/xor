@@ -21,7 +21,7 @@ paste = "^1"
 socket2 = "^0.6"
 supershorty = "^0.2.4"
 tinystr = { version = "^0.8", default-features = false }
-tokio = { version = "^1.51", default-features = false, features = [
+tokio = { version = "^1.52", default-features = false, features = [
     "macros",
     "net",
     "parking_lot",
