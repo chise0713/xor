@@ -29,7 +29,7 @@ tokio = { version = "^1.52", default-features = false, features = [
     "rt-multi-thread",
     "signal",
 ] }
-wide = "^1.1"
+wide = "^1.3"
 
 [profile.release]
 opt-level = 3
