@@ -48,7 +48,7 @@ pub struct LocalAddr;
 impl LocalAddr {
     #[must_use]
     #[inline]
-    pub fn version() -> usize {
+    fn version() -> usize {
         LOCAL_ADDR_VERSION.load(Ordering::Acquire)
     }
 
@@ -62,7 +62,7 @@ impl LocalAddr {
     }
 
     #[inline]
-    pub fn current() -> SocketAddr {
+    fn current() -> SocketAddr {
         *LOCAL_ADDR.read()
     }
 
