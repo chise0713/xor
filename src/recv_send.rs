@@ -7,7 +7,7 @@ use self::mode::{Mode, Modes};
 use crate::{
     N, WARN_LIMIT_DUR,
     buf_pool::BufPool,
-    local::{ConnectCtx, LastSeen, LocalAddr, NULL_SOCKET_ADDR},
+    local::{ConnectCtx, LastSeen, LocalAddr, LocalAddrState},
     methods::{Method, MethodState},
     shutdown::Shutdown,
     socket::Socket,
@@ -111,8 +111,7 @@ impl<M: Mode> RecvSend<M> {
         };
         let socket = M::socket();
 
-        let mut cached_ver = 0;
-        let mut cached_local = NULL_SOCKET_ADDR;
+        let mut local_addr_state = LocalAddrState::default();
 
         let method = *MethodState::current();
 
@@ -138,25 +137,20 @@ impl<M: Mode> RecvSend<M> {
                     N.fetch_max(n, Ordering::Relaxed);
                 }
 
-                if this.additional(addr, &mut cached_local, &mut cached_ver) {
+                if this.additional(addr, &mut local_addr_state) {
                     continue;
                 }
 
-                this.send(&mut buf, n, !socket, method, cached_local);
+                this.send(&mut buf, n, !socket, method, local_addr_state.addr());
             }
         }
     }
 
     #[must_use]
-    fn additional(
-        &self,
-        addr: SocketAddr,
-        cached_local: &mut SocketAddr,
-        cached_ver: &mut usize,
-    ) -> bool {
+    fn additional(&self, addr: SocketAddr, local_addr_state: &mut LocalAddrState) -> bool {
         match M::mode() {
-            Modes::Inbound => self.inbound_additional(addr, cached_local, cached_ver),
-            Modes::Outbound => self.outbound_additional(cached_local, cached_ver),
+            Modes::Inbound => self.inbound_additional(addr, local_addr_state),
+            Modes::Outbound => self.outbound_additional(local_addr_state),
         }
     }
 
@@ -164,46 +158,36 @@ impl<M: Mode> RecvSend<M> {
     /// see `self.outbound_addtional()`
     #[must_use]
     #[inline(never)]
-    fn inbound_additional(
-        &self,
-        addr: SocketAddr,
-        cached_local: &mut SocketAddr,
-        cached_ver: &mut usize,
-    ) -> bool {
+    fn inbound_additional(&self, addr: SocketAddr, local_addr_state: &mut LocalAddrState) -> bool {
         if !ConnectCtx::is_connected() {
             ConnectCtx::connect(addr);
-            *cached_local = addr;
-            *cached_ver = LocalAddr::version();
+            LocalAddr::check_and_update(local_addr_state);
             return false;
         }
 
-        if LocalAddr::check_and_update(cached_ver) {
-            *cached_local = LocalAddr::current();
-        }
+        LocalAddr::check_and_update(local_addr_state);
 
-        if addr == *cached_local {
+        if addr == local_addr_state.addr() {
             LastSeen::now();
             return false;
         }
 
-        self.mismatch(cached_local, addr)
+        self.mismatch(local_addr_state.addr(), addr)
     }
 
     /// `&cached_local` will be pass into send
     /// Socket::Inbound.try_send_to(buf, addr)
     #[inline]
     #[must_use]
-    fn outbound_additional(&self, cached_local: &mut SocketAddr, cached_ver: &mut usize) -> bool {
-        if LocalAddr::check_and_update(cached_ver) {
-            *cached_local = LocalAddr::current();
-        }
+    fn outbound_additional(&self, local_addr_state: &mut LocalAddrState) -> bool {
+        LocalAddr::check_and_update(local_addr_state);
         false
     }
 
     #[cold]
     #[must_use]
     #[inline(never)]
-    fn mismatch(&self, local: &SocketAddr, addr: SocketAddr) -> bool {
+    fn mismatch(&self, local: SocketAddr, addr: SocketAddr) -> bool {
         warn_limit_global!(1, WARN_LIMIT_DUR, "local={local}, current={addr}, dropping");
         true
     }

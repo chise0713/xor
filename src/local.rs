@@ -18,6 +18,27 @@ use crate::{CORASETIME_UPDATE, INIT, K, ONCE, const_concat};
 
 pub const NULL_SOCKET_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::from_bits(0)), 0);
 
+pub struct LocalAddrState {
+    version: usize,
+    addr: SocketAddr,
+}
+
+impl LocalAddrState {
+    #[inline(always)]
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+}
+
+impl Default for LocalAddrState {
+    fn default() -> Self {
+        Self {
+            version: Default::default(),
+            addr: NULL_SOCKET_ADDR,
+        }
+    }
+}
+
 static LOCAL_ADDR: RwLock<SocketAddr> = RwLock::new(NULL_SOCKET_ADDR);
 
 static LOCAL_ADDR_VERSION: AtomicUsize = AtomicUsize::new(0);
@@ -31,16 +52,12 @@ impl LocalAddr {
         LOCAL_ADDR_VERSION.load(Ordering::Acquire)
     }
 
-    /// returns `false` when `glob_ver` equals to `ver`
-    #[must_use]
     #[inline]
-    pub fn check_and_update(ver: &mut usize) -> bool {
+    pub fn check_and_update(cache: &mut LocalAddrState) {
         let glob_ver = Self::version();
-        if *ver != glob_ver {
-            *ver = glob_ver;
-            true
-        } else {
-            false
+        if cache.version != glob_ver {
+            cache.version = glob_ver;
+            cache.addr = Self::current();
         }
     }
 

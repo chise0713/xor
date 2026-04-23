@@ -76,8 +76,6 @@ unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
 
     let token64 = u64::from_ne_bytes([token; _]);
 
-    let token_simd_512 = u64x8::splat(token64);
-
     const CHUNK_SIZE: usize = size_of::<u64x8>();
 
     let chunks = n / CHUNK_SIZE;
@@ -86,6 +84,8 @@ unsafe fn xor(ptr: *mut u8, n: usize, token: u8) {
         // # Safety
         // `ptr` is checked by `super::align_check()`
         let data: &mut [u64x8] = unsafe { slice::from_raw_parts_mut(ptr.cast(), chunks) };
+
+        let token_simd_512 = u64x8::splat(token64);
 
         data.iter_mut().for_each(|chunk| *chunk ^= token_simd_512);
     }
