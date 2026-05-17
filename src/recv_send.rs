@@ -154,7 +154,7 @@ impl<M: Mode> RecvSend<M> {
         }
     }
 
-    /// `&cached_local` will be sync in `RecvSend::<Outbound>`
+    /// `&local_addr_state` will be sync in `RecvSend::<Outbound>`
     /// see `self.outbound_addtional()`
     #[must_use]
     #[inline(never)]
@@ -175,7 +175,7 @@ impl<M: Mode> RecvSend<M> {
         self.mismatch(local_addr_state.addr(), addr)
     }
 
-    /// `&cached_local` will be pass into send
+    /// `&local_addr_state.addr()` will be pass into send
     /// Socket::Inbound.try_send_to(buf, addr)
     #[inline]
     #[must_use]

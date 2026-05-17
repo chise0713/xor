@@ -163,7 +163,7 @@ impl WatchDog {
             CTX = "WatchDog::start()" + ONCE
         };
         if WATCH_DOG_HANDLE.get().is_some() {
-            return Err(Error::new(ErrorKind::AlreadyExists, CTX.as_str()))?;
+            Err(Error::new(ErrorKind::AlreadyExists, CTX.as_str()))?;
         };
         WATCH_DOG_HANDLE
             .set(

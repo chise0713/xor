@@ -30,7 +30,7 @@ impl XorToken {
             const_concat! {
                 CTX = "XorToken::set()" + ONCE
             };
-            return Err(Error::new(ErrorKind::AlreadyExists, CTX.as_str()))?;
+            Err(Error::new(ErrorKind::AlreadyExists, CTX.as_str()))?;
         };
         Ok(())
     }
