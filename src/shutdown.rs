@@ -11,7 +11,7 @@ impl Shutdown {
 
     pub fn try_request() -> bool {
         SHUTDOWN
-            .compare_exchange(false, true, Ordering::Release, Ordering::Acquire)
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
     }
 

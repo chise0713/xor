@@ -113,7 +113,7 @@ impl<M: Mode> RecvSend<M> {
 
         let mut local_addr_state = LocalAddrState::default();
 
-        let method = *MethodState::current();
+        let method = MethodState::current();
 
         'outer: while !Shutdown::requested() {
             if let Err(e) = socket.readable().await {

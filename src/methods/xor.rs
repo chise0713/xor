@@ -22,7 +22,7 @@ impl XorToken {
             .compare_exchange(
                 Self::SENTINEL,
                 val as usize,
-                Ordering::Release,
+                Ordering::AcqRel,
                 Ordering::Relaxed,
             )
             .is_err()

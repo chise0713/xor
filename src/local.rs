@@ -99,7 +99,7 @@ impl ConnectCtx {
 
     fn try_connect() -> bool {
         CONNECTED
-            .compare_exchange(false, true, Ordering::Release, Ordering::Acquire)
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
     }
 }

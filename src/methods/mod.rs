@@ -13,8 +13,9 @@ use_impl_struct!(xor, dns_pad);
 use std::{
     fmt::Display,
     io::{Error, ErrorKind},
+    mem,
     str::FromStr,
-    sync::OnceLock,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use anyhow::Result;
@@ -82,11 +83,13 @@ impl Display for Method {
     }
 }
 
-static CURRENT_METHOD: OnceLock<Method> = OnceLock::new();
+static CURRENT_METHOD: AtomicUsize = AtomicUsize::new(MethodState::SENTINEL);
 
 pub struct MethodState;
 
 impl MethodState {
+    const SENTINEL: usize = usize::MAX;
+
     pub fn init(method: Method) -> Result<()> {
         let exist = |_| {
             const_concat! {
@@ -95,14 +98,30 @@ impl MethodState {
             Error::new(ErrorKind::AlreadyExists, CTX.as_str())
         };
 
-        CURRENT_METHOD.set(method).map_err(exist)?;
+        CURRENT_METHOD
+            .compare_exchange(
+                Self::SENTINEL,
+                method as usize,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .map_err(exist)?;
         Ok(())
     }
 
-    pub fn current() -> &'static Method {
+    pub fn current() -> Method {
         const_concat! {
             CTX = "MethodState::current(): " + INIT
         }
-        CURRENT_METHOD.get().expect(&CTX)
+        let method = CURRENT_METHOD.load(Ordering::Acquire);
+
+        if method == Self::SENTINEL {
+            panic!("{}", CTX);
+        }
+
+        // SAFETY:
+        // - CURRENT_METHOD only stores `Method as usize`
+        // - SENTINEL is filtered before transmute
+        unsafe { mem::transmute(method) }
     }
 }
