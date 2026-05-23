@@ -106,11 +106,11 @@ pub fn payload_bound_check(payload_max: usize) -> bool {
 }
 
 impl DnsPad {
-    pub(super) const fn check_apply(buf_len: usize, n: usize) -> bool {
+    const fn check_apply(buf_len: usize, n: usize) -> bool {
         buf_len > n + DNS_QUERY_LEN
     }
 
-    pub(super) const fn check_undo(n: usize) -> bool {
+    const fn check_undo(n: usize) -> bool {
         n >= DNS_QUERY_LEN
     }
 }
