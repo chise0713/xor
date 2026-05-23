@@ -112,7 +112,7 @@ impl Started {
     pub fn now() -> Result<()> {
         let exist = |_| {
             const_concat! {
-               CTX = "Socket::now(): " + ONCE
+               CTX = "Socket::now()" + ONCE
             };
             Error::new(ErrorKind::AlreadyExists, CTX.as_str())
         };
@@ -122,7 +122,7 @@ impl Started {
 
     fn at() -> Instant {
         const_concat! {
-           CTX = "Socket::at(): " + INIT
+           CTX = "Socket::at()" + INIT
         };
         *START.get().expect(&CTX)
     }

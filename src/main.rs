@@ -62,9 +62,13 @@ macro_rules! const_concat {
     { $($name:ident = $prefix:literal + $suffix:expr),* $(,)? } => {
         use ::tinystr::TinyAsciiStr as TAS;
         $(
-            const $name: TAS<{ $prefix.len() + $suffix.len() }> = {
+            const $name: TAS<{ $prefix.len() + 2 + $suffix.len() }> = {
                 // all as `const` to avoid runtime computation
                 const SUFFIX: TAS<{ $suffix.len() }> = $suffix;
+                const MIDDLE: TAS<2> = match TAS::try_from_str(": ") {
+                    Ok(s) => s,
+                    Err(_) => unreachable!(),
+                };
                 const BASE: TAS<{ $prefix.len() }> = match TAS::try_from_str($prefix) {
                     Ok(s) => s,
                     Err(_) => panic!(concat!(
@@ -73,8 +77,9 @@ macro_rules! const_concat {
                         "\""
                     )),
                 };
-                BASE.concat(SUFFIX)
-            };
+                const ADVANCE: TAS<{ $prefix.len() + 2 }> = BASE.concat(MIDDLE);
+                ADVANCE.concat(SUFFIX)
+                };
         )*
     };
 }

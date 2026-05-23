@@ -212,7 +212,7 @@ mod sealed {
 
         fn deref(&self) -> &Self::Target {
             const_concat! {
-                CTX = "BufPool: " + INIT
+                CTX = "BufPool" + INIT
             };
             BUF_SLAB_POOL.get().expect(&CTX)
         }
@@ -224,7 +224,7 @@ mod sealed {
                 .set(BufSlabPool::new(cap, slab, stride))
                 .map_err(|_| {
                     const_concat! {
-                        CTX = "BufPoolCell::init(): " + ONCE
+                        CTX = "BufPoolCell::init()" + ONCE
                     };
                     Error::new(ErrorKind::AlreadyExists, CTX.as_str())
                 })?;

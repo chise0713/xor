@@ -29,8 +29,8 @@ impl Deref for Socket {
 
     fn deref(&self) -> &Self::Target {
         const_concat! {
-            CTX_I = "Socket::Inbound: " + INIT,
-            CTX_O = "Socket::Outbound: " + INIT
+            CTX_I = "Socket::Inbound" + INIT,
+            CTX_O = "Socket::Outbound" + INIT
         };
         match *self {
             Socket::Inbound => INBOUND_SOCKET.get().expect(&CTX_I),
@@ -105,7 +105,7 @@ impl Sockets {
     pub fn convert(self) -> Result<()> {
         let exist = |_| {
             const_concat! {
-                CTX = "Socket::convert(): " + ONCE
+                CTX = "Socket::convert()" + ONCE
             };
             Error::new(ErrorKind::AlreadyExists, CTX.as_str())
         };

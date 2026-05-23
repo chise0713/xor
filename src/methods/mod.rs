@@ -93,7 +93,7 @@ impl MethodState {
     pub fn init(method: Method) -> Result<()> {
         let exist = |_| {
             const_concat! {
-                CTX = "MethodState::set(): " + ONCE
+                CTX = "MethodState::set()" + ONCE
             }
             Error::new(ErrorKind::AlreadyExists, CTX.as_str())
         };
@@ -111,7 +111,7 @@ impl MethodState {
 
     pub fn current() -> Method {
         const_concat! {
-            CTX = "MethodState::current(): " + INIT
+            CTX = "MethodState::current()" + INIT
         }
         let method = CURRENT_METHOD.load(Ordering::Acquire);
 
