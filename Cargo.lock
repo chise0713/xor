@@ -377,9 +377,9 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "supershorty"
-version = "0.2.4"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8d91953400c20d9c915c3491c032da6c1a84bb0cfa4afbc6e2230f7e74ce145"
+checksum = "57a4b200a93e3cd5f3478d8ed435d680edacbe56e9bbcbc29641c6f106738bca"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "xor"
-version = "0.1.72"
+version = "0.1.73"
 dependencies = [
  "anyhow",
  "arrayvec",

@@ -24,7 +24,7 @@ pub struct Args {
 
 const EXIT_INVALID_ARG: u8 = 2;
 
-pub fn invalid_argument() -> Result<ExitCode> {
+pub fn invalid_argument() -> ExitCode {
     Args::usage();
-    Ok(ExitCode::from(EXIT_INVALID_ARG))
+    ExitCode::from(EXIT_INVALID_ARG)
 }

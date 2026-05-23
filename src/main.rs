@@ -28,7 +28,7 @@ use tokio::{
 };
 
 use crate::{
-    args::{Args, Parse as _},
+    args::Args,
     buf_pool::BufPool,
     local::{Started, WatchDog},
     logger::Logger,
@@ -99,7 +99,7 @@ const WORKER_STACK_SIZE: usize = 256 * K;
 
 const WARN_LIMIT_DUR: Duration = Duration::from_millis(250);
 
-fn main() -> Result<ExitCode> {
+fn main() -> ExitCode {
     // start parsing
     let Args {
         listen_address,
@@ -111,7 +111,7 @@ fn main() -> Result<ExitCode> {
     } = match Args::parse() {
         Ok(v) => v,
         Err(e) => {
-            return Ok(e);
+            return e;
         }
     };
 
@@ -166,7 +166,7 @@ fn main() -> Result<ExitCode> {
             Ok(v) => v,
             Err(e) => {
                 error!("{e}");
-                return Ok(ExitCode::FAILURE);
+                return ExitCode::FAILURE;
             }
         };
 
@@ -234,10 +234,13 @@ impl AsyncMain {
         ))
     }
 
-    async fn enter(self) -> Result<ExitCode> {
+    async fn enter(self) -> ExitCode {
         use crate::recv_send::mode::{Inbound, Outbound};
 
-        self.sockets.convert()?;
+        if let Err(e) = self.sockets.convert() {
+            error!("{e}");
+            return ExitCode::FAILURE;
+        }
 
         macro_rules! spawn_tasks {
             ($spawner:expr, $($task:expr),* $(,)?) => {
@@ -303,6 +306,6 @@ impl AsyncMain {
             }
         }
 
-        Ok(exit_code)
+        exit_code
     }
 }
