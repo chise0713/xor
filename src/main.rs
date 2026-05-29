@@ -80,7 +80,7 @@ macro_rules! const_concat {
                 };
                 const ADVANCE: TAS<{ $prefix.len() + 2 }> = BASE.concat(MIDDLE);
                 ADVANCE.concat(SUFFIX)
-                };
+            };
         )*
     };
 }

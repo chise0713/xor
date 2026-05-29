@@ -18,7 +18,7 @@ Command Summary:
 ### XOR
 - local:
 ```console
-xor -l127.0.0.1:51820 -m1492 -o2 -r place.holder.local.arpa:65535 -t0xFF
+xor -l127.0.0.1:51820 -m1492 -o2 -rplace.holder.local.arpa:65535 -t0xFF
 ```
 - remote:
 ```console
@@ -28,7 +28,7 @@ xor -l[::]:65535 -m1492 -o2 -r127.0.0.1:51820 -t0xFF
 ### Padding DNS Query
 - local:
 ```console
-xor -l127.0.0.1:51820 -m1492 -o2 -r place.holder.local.arpa:65535 -sdnspad
+xor -l127.0.0.1:51820 -m1492 -o2 -rplace.holder.local.arpa:65535 -sdnspad
 ```
 - remote:
 ```console
