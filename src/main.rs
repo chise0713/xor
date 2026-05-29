@@ -11,6 +11,7 @@ mod socket;
 
 use std::{
     num::NonZero,
+    panic::panic_any,
     process::ExitCode,
     str::FromStr as _,
     sync::atomic::{AtomicUsize, Ordering},
@@ -82,6 +83,12 @@ macro_rules! const_concat {
                 };
         )*
     };
+}
+
+#[cold]
+#[inline(never)]
+fn uninit_panic(s: &'static str) -> ! {
+    panic_any(s)
 }
 
 const LINK_MTU_MAX: usize = 65535;

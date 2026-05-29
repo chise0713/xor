@@ -93,10 +93,12 @@ impl ConnectCtx {
         CONNECTED.load(Ordering::Acquire)
     }
 
+    #[inline]
     fn disconnect() {
         CONNECTED.store(false, Ordering::Release);
     }
 
+    #[inline]
     fn try_connect() -> bool {
         CONNECTED
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)

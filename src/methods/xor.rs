@@ -8,7 +8,7 @@ use anyhow::Result;
 use wide::{u64x2, u64x4, u64x8};
 
 use super::MethodApply;
-use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, const_concat};
+use crate::{INIT, ONCE, buf_pool::SIMD_WIDTH, const_concat, uninit_panic};
 
 static TOKEN: AtomicUsize = AtomicUsize::new(XorToken::SENTINEL);
 
@@ -17,12 +17,14 @@ pub struct XorToken;
 impl XorToken {
     const SENTINEL: usize = 1 << 8;
 
+    #[cold]
+    #[inline(never)]
     pub fn init(val: u8) -> Result<()> {
         if TOKEN
             .compare_exchange(
                 Self::SENTINEL,
                 val as usize,
-                Ordering::AcqRel,
+                Ordering::Relaxed,
                 Ordering::Relaxed,
             )
             .is_err()
@@ -42,10 +44,10 @@ impl XorToken {
             CTX = "XorToken::get()" + INIT
         };
 
-        let val = TOKEN.load(Ordering::Acquire);
+        let val = TOKEN.load(Ordering::Relaxed);
 
         if val == Self::SENTINEL {
-            panic!("{}", CTX);
+            uninit_panic(CTX.as_str())
         }
 
         val as u8

@@ -27,6 +27,7 @@ pub enum Socket {
 impl Deref for Socket {
     type Target = UdpSocket;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         const_concat! {
             CTX_I = "Socket::Inbound" + INIT,

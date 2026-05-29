@@ -20,7 +20,7 @@ use std::{
 
 use anyhow::Result;
 
-use crate::{INIT, ONCE, const_concat};
+use crate::{INIT, ONCE, const_concat, uninit_panic};
 
 pub trait MethodApply {
     fn apply(buf: &mut [u8], n: &mut usize) -> Result<()>;
@@ -90,6 +90,8 @@ pub struct MethodState;
 impl MethodState {
     const SENTINEL: usize = usize::MAX;
 
+    #[cold]
+    #[inline(never)]
     pub fn init(method: Method) -> Result<()> {
         let exist = |_| {
             const_concat! {
@@ -102,21 +104,22 @@ impl MethodState {
             .compare_exchange(
                 Self::SENTINEL,
                 method as usize,
-                Ordering::AcqRel,
+                Ordering::Relaxed,
                 Ordering::Relaxed,
             )
             .map_err(exist)?;
         Ok(())
     }
 
+    #[inline]
     pub fn current() -> Method {
         const_concat! {
             CTX = "MethodState::current()" + INIT
         }
-        let method = CURRENT_METHOD.load(Ordering::Acquire);
+        let method = CURRENT_METHOD.load(Ordering::Relaxed);
 
         if method == Self::SENTINEL {
-            panic!("{}", CTX);
+            uninit_panic(CTX.as_str());
         }
 
         // SAFETY:

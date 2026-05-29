@@ -75,6 +75,7 @@ impl BufPool {
         Ok(())
     }
 
+    #[inline]
     pub fn acquire() -> LeasedBuf {
         if let Some(meta) = META_IDX_POOL.with_borrow_mut(ArrayVec::pop) {
             // # Safety
@@ -103,18 +104,21 @@ impl LeasedBuf {
 impl Deref for LeasedBuf {
     type Target = [u8];
 
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         unsafe { self.ptr.as_ref() }
     }
 }
 
 impl DerefMut for LeasedBuf {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.ptr.as_mut() }
     }
 }
 
 impl Drop for LeasedBuf {
+    #[inline]
     fn drop(&mut self) {
         let return_to_global = META_IDX_POOL.with_borrow_mut(|pool| {
             if !pool.is_full() {
