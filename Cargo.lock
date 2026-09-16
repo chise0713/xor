@@ -195,9 +195,9 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "log_limit"
-version = "0.2.4"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed212408d20fb3c676121335c0c224d514fc140a89da720c98ac7d4aed8cb635"
+checksum = "df008bb1cc1dcb0189807f8e05b008b5baecb3d303e473afc0627a92abd47d7d"
 dependencies = [
  "log",
 ]
